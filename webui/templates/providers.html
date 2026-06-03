@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Providers{% endblock %}
+{% block content %}
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <h1 style="font-size:20px;font-weight:600">Providers</h1>
+    <div style="display:flex;gap:8px;align-items:center;">
+        <a href="{{ url_for('provider_export') }}" class="btn btn-sm" style="background:#eee;">Export</a>
+        <button class="btn btn-sm" style="background:#eee;" onclick="document.getElementById('import-file').click()">Import</button>
+        <input type="file" id="import-file" accept=".json" style="display:none" onchange="importProviders(this)">
+        <a href="{{ url_for('provider_add') }}" class="btn btn-primary">+ Add Provider</a>
+    </div>
+</div>
+
+<script>
+function importProviders(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    fetch('{{ url_for("provider_import") }}', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) { alert('Import failed: ' + data.error); return; }
+            alert('Import complete: ' + (data.imported || 0) + ' created, ' + (data.updated || 0) + ' updated, ' + (data.skipped || 0) + ' skipped');
+            window.location.reload();
+        })
+        .catch(e => alert('Import failed: ' + e.message));
+    input.value = '';
+}
+</script>
+
+<div class="card">
+    {% if providers %}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Base URL</th>
+                <th>Models</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in providers %}
+            <tr>
+                <td><strong>{{ p.name }}</strong></td>
+                <td><span class="badge badge-active">{{ p.provider_type }}</span></td>
+                <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.base_url }}</td>
+                <td>{{ p.models | join(', ') }}</td>
+                <td>
+                    {% if p.is_active %}
+                    <span class="badge badge-active">Active</span>
+                    {% else %}
+                    <span class="badge badge-inactive">Inactive</span>
+                    {% endif %}
+                </td>
+                <td class="inline-flex">
+                    <a href="{{ url_for('provider_edit', pid=p.id) }}" class="btn btn-primary btn-sm">Edit</a>
+                    <form method="POST" action="{{ url_for('provider_delete', pid=p.id) }}" style="display:inline" onsubmit="return confirm('Delete this provider?')">
+                        <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty">No providers configured yet. <a href="{{ url_for('provider_add') }}">Add one now</a>.</p>
+    {% endif %}
+</div>
+{% endblock %}

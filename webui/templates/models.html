@@ -1,0 +1,406 @@
+{% extends "base.html" %}
+{% block title %}Models{% endblock %}
+{% block content %}
+
+<style>
+.model-card { background:white; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,.1); padding:16px; margin-bottom:12px; }
+.model-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+.model-header h2 { font-size:16px; font-weight:600; margin:0; }
+.provider-badge { font-size:11px; padding:2px 8px; border-radius:8px; background:#e8eefb; color:#4361ee; }
+.model-list { display:flex; flex-wrap:wrap; gap:6px; }
+.model-tag { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:6px; font-size:13px; background:#f5f5f5; border:1px solid #e0e0e0; cursor:pointer; transition:all .15s; }
+.model-tag:hover { border-color:#4361ee; background:#f0f4ff; }
+.model-tag.selected { border-color:#4361ee; background:#e8eefb; }
+.model-tag .status { width:8px; height:8px; border-radius:50%; display:inline-block; flex-shrink:0; }
+.status-idle { background:#ccc; }
+.status-testing { background:#f4a261; animation:pulse 0.8s infinite; }
+.status-ok { background:#2d6a4f; }
+.status-err { background:#e63946; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+/* Test config bar */
+.config-bar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
+.config-bar label { font-size:13px; font-weight:600; color:#555; white-space:nowrap; }
+.config-bar input, .config-bar select { padding:6px 10px; border:1px solid #ddd; border-radius:6px; font-size:13px; }
+.config-bar input[type=text] { flex:1; min-width:200px; }
+.config-bar input[type=number] { width:80px; }
+
+/* Results table */
+.results-table { width:100%; border-collapse:collapse; font-size:13px; margin-top:12px; }
+.results-table th { text-align:left; padding:8px 10px; border-bottom:2px solid #e0e0e0; font-weight:600; color:#555; background:#fafafa; white-space:nowrap; }
+.results-table td { padding:7px 10px; border-bottom:1px solid #f0f0f0; }
+.results-table .model-cell { font-weight:600; }
+.results-table .latency-cell { font-family:monospace; text-align:right; }
+.results-table .status-badge { display:inline-block; padding:2px 8px; border-radius:8px; font-size:11px; font-weight:600; }
+.status-badge.ok { background:#d4edda; color:#155724; }
+.status-badge.err { background:#f8d7da; color:#721c24; }
+.status-badge.testing { background:#fff3cd; color:#856404; }
+.results-table .error-cell { color:#e63946; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+</style>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <h1 style="font-size:20px;font-weight:600">Models</h1>
+    <span id="select-info" style="font-size:13px;color:#888;"></span>
+</div>
+
+{% for p in providers %}
+<div class="model-card">
+    <div class="model-header">
+        <div>
+            <h2>{{ p.name }}</h2>
+            <span class="provider-badge">{{ p.provider_type }}</span>
+            <span style="font-size:12px;color:#888;margin-left:8px">{{ p.base_url }}</span>
+        </div>
+        <label style="font-size:13px;display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input type="checkbox" class="provider-select-all" data-provider="{{ p.name }}" onchange="toggleProvider(this, '{{ p.name|replace("'","\\'") }}')">
+            Select All
+        </label>
+    </div>
+    <div class="model-list" id="models-{{ loop.index }}">
+        {% for m in p.models %}
+        <div class="model-tag{% if loop.index == 1 %}{% endif %}" data-model="{{ m }}" data-provider="{{ p.name }}" onclick="toggleModel(this)" id="tag-{{ p.name|replace('/','_')|replace(' ','_') }}-{{ m|replace('/','_')|replace(' ','_') }}">
+            <span class="status status-idle" id="status-{{ p.name|replace('/','_')|replace(' ','_') }}-{{ m|replace('/','_')|replace(' ','_') }}"></span>
+            {{ m }}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endfor %}
+
+<div class="card">
+    <h2 style="font-size:15px;font-weight:600;margin-bottom:12px;">Test Models</h2>
+    <div class="config-bar">
+        <label>Message</label>
+        <input type="text" id="test-message" value="hi" placeholder="Test message to send">
+        <label>Timeout (s)</label>
+        <input type="number" id="test-timeout" value="30" min="5" max="300">
+        <button class="btn btn-primary" id="btn-test" onclick="startTest()">Run Test</button>
+        <button class="btn btn-sm" style="background:#eee;color:#333;" id="btn-stop" onclick="stopTest()" disabled>Stop</button>
+    </div>
+    <div class="config-bar" style="margin-bottom:0;">
+        <label style="font-weight:400;">
+            <input type="radio" name="test-scope" value="all" checked onchange="onScopeChange()"> Test All Models
+        </label>
+        <label style="font-weight:400;">
+            <input type="radio" name="test-scope" value="selected" onchange="onScopeChange()"> Test Selected
+        </label>
+        <span style="font-size:12px;color:#888;" id="selected-count-label">0 selected</span>
+    </div>
+</div>
+
+<div id="results-card" class="card" style="display:none;">
+    <h2 style="font-size:15px;font-weight:600;margin-bottom:12px;">Results</h2>
+    <div style="overflow-x:auto;">
+        <table class="results-table">
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th>Provider</th>
+                    <th>Status</th>
+                    <th>Latency</th>
+                    <th>Output Tok</th>
+                    <th>Tok/s</th>
+                    <th>Content</th>
+                    <th>Error</th>
+                </tr>
+            </thead>
+            <tbody id="results-body"></tbody>
+        </table>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:16px;font-size:13px;">
+        <span>Passed: <strong id="result-passed">0</strong></span>
+        <span>Failed: <strong id="result-failed">0</strong></span>
+        <span>Total: <strong id="result-total">0</strong></span>
+    </div>
+</div>
+
+<script>
+let selectedModels = new Set();
+let isTesting = false;
+let abortController = null;
+
+function toggleModel(el) {
+    const model = el.dataset.model;
+    if (isTesting) return;
+    if (selectedModels.has(model)) {
+        selectedModels.delete(model);
+        el.classList.remove('selected');
+    } else {
+        selectedModels.add(model);
+        el.classList.add('selected');
+        // Auto-switch to Test Selected
+        document.querySelector('input[name="test-scope"][value="selected"]').checked = true;
+    }
+    updateSelectInfo();
+    onScopeChange();
+}
+
+function toggleProvider(checkbox, providerName) {
+    if (isTesting) return;
+    const tags = document.querySelectorAll(`.model-tag[data-provider="${providerName}"]`);
+    tags.forEach(tag => {
+        const model = tag.dataset.model;
+        if (checkbox.checked) {
+            selectedModels.add(model);
+            tag.classList.add('selected');
+        } else {
+            selectedModels.delete(model);
+            tag.classList.remove('selected');
+        }
+    });
+    updateSelectInfo();
+    // Switching to "Test Selected" when any model is selected via Select All
+    if (selectedModels.size > 0) {
+        document.querySelector('input[name="test-scope"][value="selected"]').checked = true;
+    }
+    onScopeChange();
+}
+
+function updateSelectInfo() {
+    document.getElementById('selected-count-label').textContent = selectedModels.size + ' selected';
+}
+
+function onScopeChange() {
+    const scope = document.querySelector('input[name="test-scope"]:checked').value;
+    document.getElementById('selected-count-label').style.display = scope === 'selected' ? 'inline' : 'none';
+    if (scope === 'all') {
+        // Deselect all models and uncheck all provider Select-All checkboxes
+        selectedModels.clear();
+        document.querySelectorAll('.model-tag').forEach(t => t.classList.remove('selected'));
+        document.querySelectorAll('.provider-select-all').forEach(cb => cb.checked = false);
+        updateSelectInfo();
+    }
+}
+
+function getModelsToTest() {
+    const scope = document.querySelector('input[name="test-scope"]:checked').value;
+    if (scope === 'selected') {
+        return [...selectedModels];
+    }
+    // All models
+    const tags = document.querySelectorAll('.model-tag');
+    return [...new Set([...tags].map(t => t.dataset.model))];
+}
+
+function setAllStatus(cls) {
+    document.querySelectorAll('.model-tag .status').forEach(s => {
+        s.className = 'status ' + cls;
+    });
+}
+
+function setModelStatus(model, cls) {
+    const statusEl = document.querySelector(`[id^="status-"][id$="-${model.replace(/[^a-zA-Z0-9_-]/g,'_')}"]`);
+    if (statusEl) {
+        statusEl.className = 'status ' + cls;
+    }
+    // Try partial match as fallback
+    document.querySelectorAll('.model-tag .status').forEach((el, idx) => {
+        const tag = el.closest('.model-tag');
+        if (tag && tag.dataset.model === model) {
+            el.className = 'status ' + cls;
+        }
+    });
+}
+
+function resetModelStatuses() {
+    document.querySelectorAll('.model-tag .status').forEach(s => {
+        s.className = 'status status-idle';
+    });
+}
+
+function startTest() {
+    if (isTesting) return;
+    const models = getModelsToTest();
+    if (models.length === 0) {
+        alert('No models selected');
+        return;
+    }
+
+    isTesting = true;
+    abortController = new AbortController();
+    document.getElementById('btn-test').disabled = true;
+    document.getElementById('btn-stop').disabled = false;
+    document.getElementById('results-card').style.display = 'block';
+    document.getElementById('results-body').innerHTML = '';
+    document.getElementById('result-passed').textContent = '0';
+    document.getElementById('result-failed').textContent = '0';
+    document.getElementById('result-total').textContent = models.length;
+
+    resetModelStatuses();
+
+    // Pre-fill results table - only first model gets "Testing..." status
+    const tbody = document.getElementById('results-body');
+    models.forEach((m, i) => {
+        const tag = document.querySelector(`.model-tag[data-model="${m}"]`);
+        const provider = tag ? tag.dataset.provider : '-';
+        const row = document.createElement('tr');
+        row.id = 'result-' + m.replace(/[^a-zA-Z0-9_-]/g, '_');
+        row.innerHTML = `
+            <td class="model-cell">${m}</td>
+            <td><span class="provider-badge">${provider}</span></td>
+            <td><span class="status-badge ${i === 0 ? 'testing' : ''}">${i === 0 ? 'Testing...' : 'Pending'}</span></td>
+            <td class="latency-cell">-</td>
+            <td class="latency-cell">-</td>
+            <td class="latency-cell">-</td>
+            <td class="content-cell" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#555;"></td>
+            <td class="error-cell">-</td>`;
+        tbody.appendChild(row);
+        if (i === 0) setModelStatus(m, 'status-testing');
+    });
+
+    const message = document.getElementById('test-message').value || 'hi';
+    const timeout = parseInt(document.getElementById('test-timeout').value) || 30;
+
+    // Direct call to Go backend (bypass Flask proxy to avoid SSE buffering)
+    const testUrl = '{{ go_base }}'.replace('127.0.0.1', window.location.hostname) + '/admin/api/models/test';
+
+    fetch(testUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            models: models,
+            message: message,
+            timeout_seconds: timeout
+        }),
+        signal: abortController.signal
+    }).then(async response => {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const data = line.slice(6).trim();
+                if (!data) continue;
+
+                try {
+                    const result = JSON.parse(data);
+                    if (result.done) {
+                        finishTest();
+                        return;
+                    }
+                    updateResult(result);
+                } catch (e) {
+                    console.warn('SSE parse error:', e, data);
+                }
+            }
+        }
+        finishTest();
+    }).catch(err => {
+        if (err.name === 'AbortError') {
+            finishTest();
+        } else {
+            console.error('Test error:', err);
+            // Show error in all pending rows
+            document.querySelectorAll('#results-body tr').forEach(r => {
+                const badge = r.querySelector('.status-badge');
+                if (badge && badge.textContent.trim() !== 'OK' && badge.textContent.trim() !== 'Error') {
+                    badge.className = 'status-badge err';
+                    badge.textContent = 'Error';
+                    const errCell = r.querySelector('.error-cell');
+                    if (errCell) errCell.textContent = 'Request failed: ' + err.message;
+                }
+            });
+            finishTest();
+        }
+    });
+}
+
+function updateResult(result) {
+    const model = result.model;
+    const rowId = 'result-' + model.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const row = document.getElementById(rowId);
+
+    if (!row) return;
+
+    const cells = row.querySelectorAll('td');
+
+    if (result.stream) {
+        cells[6].textContent = result.content || '';
+        return;
+    }
+
+    if (result.success) {
+        cells[2].innerHTML = '<span class="status-badge ok">OK</span>';
+    } else {
+        cells[2].innerHTML = '<span class="status-badge err">Error</span>';
+    }
+    cells[3].textContent = result.latency_ms + 'ms';
+    cells[4].textContent = result.completion_tokens != null ? result.completion_tokens.toLocaleString() : '-';
+    const tps = result.tokens_per_sec;
+    cells[5].textContent = (tps != null && tps > 0) ? tps.toFixed(1) : '-';
+    cells[6].textContent = result.content || '-';
+    cells[7].textContent = result.error || '-';
+
+    setModelStatus(model, result.success ? 'status-ok' : 'status-err');
+
+    // Mark next pending model as "Testing..."
+    const rows = document.querySelectorAll('#results-body tr');
+    let found = false;
+    rows.forEach(r => {
+        const badge = r.querySelector('.status-badge');
+        if (!badge) return;
+        if (!found && badge.classList.contains('testing')) {
+            found = true; // current one just finished
+        } else if (found && badge.textContent.trim() === 'Pending') {
+            badge.className = 'status-badge testing';
+            badge.textContent = 'Testing...';
+            const modelName = r.querySelector('.model-cell')?.textContent;
+            if (modelName) setModelStatus(modelName, 'status-testing');
+            found = false; // stop after marking one
+        }
+    });
+
+    // Count results
+    let passed = 0, failed = 0;
+    rows.forEach(r => {
+        const badge = r.querySelector('.status-badge');
+        if (badge) {
+            if (badge.classList.contains('ok')) passed++;
+            else if (badge.classList.contains('err')) failed++;
+        }
+    });
+    document.getElementById('result-passed').textContent = passed;
+    document.getElementById('result-failed').textContent = failed;
+}
+
+function finishTest() {
+    isTesting = false;
+    document.getElementById('btn-test').disabled = false;
+    document.getElementById('btn-stop').disabled = true;
+
+    // Final count
+    const rows = document.querySelectorAll('#results-body tr');
+    let passed = 0, failed = 0, pending = 0;
+    rows.forEach(r => {
+        const badge = r.querySelector('.status-badge');
+        if (badge) {
+            if (badge.classList.contains('ok')) passed++;
+            else if (badge.classList.contains('err')) failed++;
+            else if (badge.classList.contains('testing')) pending++;
+        }
+    });
+    document.getElementById('result-passed').textContent = passed;
+    document.getElementById('result-failed').textContent = failed;
+    document.getElementById('result-total').textContent = rows.length;
+}
+
+function stopTest() {
+    if (abortController) {
+        abortController.abort();
+    }
+    finishTest();
+}
+
+// Init scope
+onScopeChange();
+</script>
+{% endblock %}

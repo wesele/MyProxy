@@ -1,0 +1,794 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "My Proxy API",
+    "description": "My Proxy provides an OpenAI-compatible API gateway that routes requests to configured providers. All admin endpoints require authentication via Bearer token or local/private IP access.\n\n## Authentication\n- **Admin API**: Bearer token (`Authorization: Bearer <api_key>`) or localhost access\n- **Public API** (`/v1/*`): Authenticated via the upstream provider's own API key (configured per-provider)",
+    "version": "1.0.0"
+  },
+  "servers": [
+    { "url": "/", "description": "Same-origin (proxy handles routing)" }
+  ],
+  "paths": {
+    "/v1/chat/completions": {
+      "post": {
+        "summary": "Chat Completions (OpenAI-compatible)",
+        "description": "Send a chat completion request. Routes to the correct upstream provider based on the model name. Supports both streaming and non-streaming responses. Transparently translates to/from Gemini format when the target is a Gemini provider.",
+        "tags": ["Public API"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model": { "type": "string", "example": "gpt-4" },
+                  "messages": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "role": { "type": "string", "enum": ["system", "user", "assistant"] },
+                        "content": { "type": "string" }
+                      }
+                    }
+                  },
+                  "stream": { "type": "boolean", "default": false },
+                  "max_tokens": { "type": "integer" },
+                  "temperature": { "type": "number" },
+                  "top_p": { "type": "number" },
+                  "top_k": { "type": "integer" }
+                },
+                "required": ["model", "messages"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful chat completion (non-streaming). Returns standard OpenAI chat completion response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "object": { "type": "string" },
+                    "created": { "type": "integer" },
+                    "model": { "type": "string" },
+                    "choices": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "index": { "type": "integer" },
+                          "message": {
+                            "type": "object",
+                            "properties": {
+                              "role": { "type": "string" },
+                              "content": { "type": "string" }
+                            }
+                          },
+                          "finish_reason": { "type": "string" }
+                        }
+                      }
+                    },
+                    "usage": {
+                      "type": "object",
+                      "properties": {
+                        "prompt_tokens": { "type": "integer" },
+                        "completion_tokens": { "type": "integer" },
+                        "total_tokens": { "type": "integer" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Bad request" }
+        }
+      }
+    },
+    "/v1/embeddings": {
+      "post": {
+        "summary": "Create Embeddings (OpenAI-compatible)",
+        "description": "Create embedding vectors for the given input text. Routes to the provider that owns the requested model.",
+        "tags": ["Public API"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model": { "type": "string" },
+                  "input": { "type": "string" }
+                },
+                "required": ["model", "input"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Successful embedding response" },
+          "400": { "description": "Bad request" }
+        }
+      }
+    },
+    "/v1/messages": {
+      "post": {
+        "summary": "Claude Messages (Anthropic-compatible)",
+        "description": "Anthropic Claude-compatible messages API. Routes to the provider that owns the requested model.",
+        "tags": ["Public API"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model": { "type": "string" },
+                  "messages": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "role": { "type": "string" },
+                        "content": { "type": "string" }
+                      }
+                    }
+                  },
+                  "max_tokens": { "type": "integer" },
+                  "stream": { "type": "boolean" }
+                },
+                "required": ["model", "messages", "max_tokens"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Successful response" },
+          "400": { "description": "Bad request" }
+        }
+      }
+    },
+    "/v1/models": {
+      "get": {
+        "summary": "List Models (OpenAI-compatible)",
+        "description": "Returns a list of all available models from all active providers, in OpenAI-compatible format.",
+        "tags": ["Public API"],
+        "responses": {
+          "200": {
+            "description": "Model list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": { "type": "string" },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "object": { "type": "string" },
+                          "created": { "type": "integer" },
+                          "owned_by": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/api/providers": {
+      "get": {
+        "summary": "List Providers",
+        "description": "Returns all configured providers. API keys are masked.",
+        "tags": ["Admin API - Providers"],
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Provider list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Provider" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Provider",
+        "description": "Create a new provider configuration.",
+        "tags": ["Admin API - Providers"],
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "provider_type": { "type": "string", "enum": ["openai", "anthropic", "gemini"] },
+                  "base_url": { "type": "string", "format": "uri" },
+                  "api_key": { "type": "string" },
+                  "models": { "type": "array", "items": { "type": "string" } },
+                  "is_active": { "type": "boolean", "default": true },
+                  "priority": { "type": "integer", "default": 0 }
+                },
+                "required": ["name", "provider_type", "base_url"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Provider created",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Provider" } } }
+          }
+        }
+      }
+    },
+    "/admin/api/providers/{id}": {
+      "get": {
+        "summary": "Get Provider",
+        "description": "Get a single provider by ID.",
+        "tags": ["Admin API - Providers"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "integer" }
+        }],
+        "responses": {
+          "200": {
+            "description": "Provider details",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Provider" } } }
+          },
+          "404": { "description": "Provider not found" }
+        }
+      },
+      "put": {
+        "summary": "Update Provider",
+        "description": "Update an existing provider. If api_key is empty or masked, preserves the existing key.",
+        "tags": ["Admin API - Providers"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "integer" }
+        }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "provider_type": { "type": "string" },
+                  "base_url": { "type": "string" },
+                  "api_key": { "type": "string" },
+                  "models": { "type": "array", "items": { "type": "string" } },
+                  "is_active": { "type": "boolean" },
+                  "priority": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Provider updated",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Provider" } } }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Provider",
+        "description": "Delete a provider by ID.",
+        "tags": ["Admin API - Providers"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "integer" }
+        }],
+        "responses": {
+          "200": {
+            "description": "Provider deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/api/providers/export": {
+      "get": {
+        "summary": "Export Providers",
+        "description": "Export all providers with full unmasked API keys as a JSON backup file.",
+        "tags": ["Admin API - Providers"],
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "JSON file download containing all provider data (unmasked API keys)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Provider" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/api/providers/import": {
+      "post": {
+        "summary": "Import Providers",
+        "description": "Import providers from a JSON backup. Creates new providers and updates existing ones (matched by name).",
+        "tags": ["Admin API - Providers"],
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "providers": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": { "type": "string" },
+                        "provider_type": { "type": "string" },
+                        "base_url": { "type": "string" },
+                        "api_key": { "type": "string" },
+                        "models": { "type": "array", "items": { "type": "string" } },
+                        "is_active": { "type": "boolean" },
+                        "priority": { "type": "integer" }
+                      }
+                    }
+                  }
+                },
+                "required": ["providers"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Import result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "imported": { "type": "integer" },
+                    "updated": { "type": "integer" },
+                    "skipped": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/api/providers/fetch-models": {
+      "post": {
+        "summary": "Fetch Models from Provider",
+        "description": "Call the provider's API to discover available models.",
+        "tags": ["Admin API - Providers"],
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "base_url": { "type": "string", "description": "Provider base URL" },
+                  "api_key": { "type": "string", "description": "Provider API key" },
+                  "provider_type": { "type": "string", "description": "Provider type (openai, anthropic, gemini)" }
+                },
+                "required": ["base_url", "api_key", "provider_type"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Discovered models",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "models": { "type": "array", "items": { "type": "string" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/api/providers/test": {
+      "post": {
+        "summary": "Test Provider",
+        "description": "Test a provider connection by sending a simple chat request.",
+        "tags": ["Admin API - Providers"],
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "base_url": { "type": "string" },
+                  "api_key": { "type": "string" },
+                  "provider_type": { "type": "string" },
+                  "model": { "type": "string" }
+                },
+                "required": ["base_url", "api_key", "provider_type", "model"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Test result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "latency_ms": { "type": "integer" },
+                    "error": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/api/models/test": {
+      "post": {
+        "summary": "Test Models (SSE Stream)",
+        "description": "Test one or more models with a chat request. Results are streamed via SSE (Server-Sent Events). Each model produces a result event, and streaming deltas are sent for real-time updates.",
+        "tags": ["Admin API - Providers"],
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "models": { "type": "array", "items": { "type": "string" } },
+                  "message": { "type": "string", "default": "hi" },
+                  "timeout_seconds": { "type": "integer", "default": 30 }
+                },
+                "required": ["models"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "SSE stream of test results",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "model": { "type": "string" },
+                    "success": { "type": "boolean" },
+                    "latency_ms": { "type": "integer" },
+                    "completion_tokens": { "type": "integer" },
+                    "tokens_per_sec": { "type": "number" },
+                    "content": { "type": "string" },
+                    "error": { "type": "string" },
+                    "stream": { "type": "boolean", "description": "Present on delta events" },
+                    "delta": { "type": "string", "description": "Content delta for streaming" },
+                    "done": { "type": "boolean", "description": "Signal end of stream" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/api/keys": {
+      "get": {
+        "summary": "List API Keys",
+        "description": "Returns all admin API keys.",
+        "tags": ["Admin API - Keys"],
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "API key list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/ApiKey" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create API Key",
+        "description": "Create a new admin API key. The raw key value is returned only in the creation response.",
+        "tags": ["Admin API - Keys"],
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "rate_limit_rpm": { "type": "integer", "default": 0 }
+                },
+                "required": ["name"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Created API key (includes raw key_value)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiKey" } } }
+          }
+        }
+      }
+    },
+    "/admin/api/keys/{id}": {
+      "put": {
+        "summary": "Update API Key",
+        "description": "Update an API key's name, status, or rate limit.",
+        "tags": ["Admin API - Keys"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "integer" }
+        }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "is_active": { "type": "boolean" },
+                  "rate_limit_rpm": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "API key updated" }
+        }
+      },
+      "delete": {
+        "summary": "Delete API Key",
+        "description": "Delete an API key by ID.",
+        "tags": ["Admin API - Keys"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "integer" }
+        }],
+        "responses": {
+          "200": { "description": "API key deleted" }
+        }
+      }
+    },
+    "/admin/api/stats": {
+      "get": {
+        "summary": "Get Usage Statistics",
+        "description": "Returns usage statistics for the specified time period.",
+        "tags": ["Admin API - Stats"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "hours",
+            "in": "query",
+            "schema": { "type": "integer", "default": 24 },
+            "description": "Lookback period in hours"
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "Optional model filter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statistics response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/StatsResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/api/logs": {
+      "get": {
+        "summary": "Get Model Logs",
+        "description": "Returns request logs for a specific model.",
+        "tags": ["Admin API - Stats"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "model",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Model name filter"
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "schema": { "type": "integer", "default": 24 },
+            "description": "Lookback period in hours"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "default": 100 },
+            "description": "Maximum number of log entries"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Log entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/RequestLog" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Admin API key obtained from the API Keys page. Not required when accessing from localhost."
+      }
+    },
+    "schemas": {
+      "Provider": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "provider_type": { "type": "string" },
+          "base_url": { "type": "string" },
+          "api_key": { "type": "string", "description": "Masked in list/get, full in create/export" },
+          "models": { "type": "array", "items": { "type": "string" } },
+          "is_active": { "type": "boolean" },
+          "priority": { "type": "integer" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ApiKey": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "key_prefix": { "type": "string" },
+          "key_value": { "type": "string", "description": "Only returned on key creation" },
+          "is_active": { "type": "boolean" },
+          "rate_limit_rpm": { "type": "integer" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "RequestLog": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "request_id": { "type": "string" },
+          "model": { "type": "string" },
+          "request_type": { "type": "string" },
+          "prompt_tokens": { "type": "integer" },
+          "completion_tokens": { "type": "integer" },
+          "input_cache_tokens": { "type": "integer" },
+          "latency_ms": { "type": "integer" },
+          "status_code": { "type": "integer" },
+          "is_error": { "type": "boolean" },
+          "request_summary": { "type": "string" },
+          "response_summary": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "StatsResponse": {
+        "type": "object",
+        "properties": {
+          "total_requests": { "type": "integer" },
+          "error_rate": { "type": "number" },
+          "avg_latency_ms": { "type": "number" },
+          "p50_latency_ms": { "type": "number" },
+          "p95_latency_ms": { "type": "number" },
+          "p99_latency_ms": { "type": "number" },
+          "total_tokens": { "type": "integer" },
+          "model_breakdown": {
+            "type": "object",
+            "additionalProperties": { "type": "integer" }
+          },
+          "model_stats": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "model": { "type": "string" },
+                "total_requests": { "type": "integer" },
+                "error_count": { "type": "integer" },
+                "error_rate": { "type": "number" },
+                "avg_latency_ms": { "type": "number" },
+                "p50_latency_ms": { "type": "number" },
+                "p95_latency_ms": { "type": "number" },
+                "p99_latency_ms": { "type": "number" },
+                "prompt_tokens": { "type": "integer" },
+                "completion_tokens": { "type": "integer" },
+                "input_cache_tokens": { "type": "integer" },
+                "total_tokens": { "type": "integer" },
+                "avg_tokens_per_sec": { "type": "number" },
+                "output_toks_per_sec": { "type": "number" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

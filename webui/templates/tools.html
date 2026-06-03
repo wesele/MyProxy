@@ -1,0 +1,255 @@
+{% extends "base.html" %}
+{% block title %}Tools{% endblock %}
+{% block content %}
+<style>
+html, body { height: 100%; overflow: hidden; }
+.tools-layout { display: flex; gap: 16px; height: calc(100vh - 104px); }
+.tools-sidebar { width: 170px; flex-shrink: 0; display: flex; flex-direction: column; }
+.tools-sidebar .card { padding: 10px; }
+.tools-sidebar .tool-item { padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; color: #555; margin-bottom: 2px; transition: all .15s; }
+.tools-sidebar .tool-item:hover { background: #f0f4ff; color: #4361ee; }
+.tools-sidebar .tool-item.active { background: #e8eefb; color: #4361ee; font-weight: 600; }
+.tools-main { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100%; }
+
+/* Training tool */
+.training-card { display: flex; gap: 16px; flex: 1; min-height: 0; padding: 16px; margin-bottom: 0; }
+.training-left { width: 200px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.training-btn { width: 100px; height: 100px; border-radius: 50%; border: none; font-size: 16px; font-weight: 700; cursor: pointer; transition: all .3s; box-shadow: 0 3px 10px rgba(0,0,0,.12); }
+.training-btn.start { background: #4361ee; color: white; }
+.training-btn.start:hover { background: #3a56d4; transform: scale(1.05); }
+.training-btn.stop { background: #e63946; color: white; animation: pulse 1.5s infinite; }
+.training-btn.stop:hover { background: #c1121f; transform: scale(1.05); }
+@keyframes pulse { 0%,100%{box-shadow:0 0 0 0 rgba(230,57,70,.5)} 50%{box-shadow:0 0 0 12px rgba(230,57,70,0)} }
+.training-timer { font-size: 36px; font-weight: 700; color: #333; text-align: center; margin-top: 8px; font-variant-numeric:tabular-nums; }
+.training-label { text-align: center; color: #888; font-size: 12px; margin-top: 2px; }
+.training-right { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.training-chart-title { font-size: 13px; font-weight: 600; color: #555; margin-bottom: 4px; flex-shrink: 0; }
+#trainingChart { flex: 1; min-height: 0; width: 100%; display: block; }
+</style>
+
+<div class="tools-layout">
+    <div class="tools-sidebar">
+        <div class="card" style="flex:1;">
+            <div style="font-size:12px;font-weight:600;color:#888;padding:2px 10px 6px;">Tools</div>
+            <div class="tool-item active" data-tool="pelvic_floor" onclick="switchTool('pelvic_floor')">盆底肌训练</div>
+        </div>
+    </div>
+    <div class="tools-main">
+        <div id="tool-pelvic_floor" style="height:100%;display:flex;flex-direction:column;min-height:0;">
+            <div class="card training-card">
+                <div class="training-left">
+                    <button id="training-btn" class="training-btn start" onclick="toggleTraining()">开始训练</button>
+                    <div class="training-timer" id="training-timer">00:00</div>
+                    <div class="training-label" id="training-status">准备就绪</div>
+                </div>
+                <div class="training-right">
+                    <div class="training-chart-title">最近7天训练记录</div>
+                    <canvas id="trainingChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let trainingChart = null;
+let trainingActive = false;
+let trainingId = 0;
+let timerInterval = null;
+let timerSeconds = 0;
+
+function switchTool(tool) {
+    document.querySelectorAll('.tool-item').forEach(el => el.classList.remove('active'));
+    document.querySelector(`.tool-item[data-tool="${tool}"]`).classList.add('active');
+    document.querySelectorAll('[id^="tool-"]').forEach(el => el.style.display = 'none');
+    const toolEl = document.getElementById('tool-' + tool);
+    if (toolEl) toolEl.style.display = 'block';
+}
+
+function formatTime(secs) {
+    const m = String(Math.floor(secs / 60)).padStart(2, '0');
+    const s = String(secs % 60).padStart(2, '0');
+    return m + ':' + s;
+}
+
+function toggleTraining() {
+    if (trainingActive) {
+        stopTraining();
+    } else {
+        startTraining();
+    }
+}
+
+function startTraining() {
+    fetch('/admin/api/training/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool: 'pelvic_floor' })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) { alert(data.error); return; }
+        trainingActive = true;
+        trainingId = data.id;
+        timerSeconds = 0;
+        document.getElementById('training-timer').textContent = '00:00';
+        document.getElementById('training-status').textContent = '训练中...';
+        const btn = document.getElementById('training-btn');
+        btn.className = 'training-btn stop';
+        btn.textContent = '结束训练';
+        if (timerInterval) clearInterval(timerInterval);
+        timerInterval = setInterval(() => {
+            timerSeconds++;
+            document.getElementById('training-timer').textContent = formatTime(timerSeconds);
+        }, 1000);
+    });
+}
+
+function stopTraining() {
+    fetch('/admin/api/training/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: trainingId })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) { alert(data.error); return; }
+        trainingActive = false;
+        if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+        const btn = document.getElementById('training-btn');
+        btn.className = 'training-btn start';
+        btn.textContent = '开始训练';
+        const dur = timerSeconds;
+        document.getElementById('training-status').textContent = '上次训练: ' + formatTime(dur);
+        trainingId = 0;
+        loadTrainingStats();
+    });
+}
+
+function loadTrainingStats() {
+    fetch('/admin/api/training/stats?tool=pelvic_floor&days=7')
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) return;
+        renderTrainingChart(data);
+    });
+}
+
+function renderTrainingChart(data) {
+    if (!data || !data.dates) return;
+    const labels = data.dates.map(d => {
+        const parts = d.date.split('-');
+        return parts[1] + '/' + parts[2];
+    });
+
+    // Each day -> stacked segments per session, total as a line-like overlay
+    const sessionColors = ['#4361ee', '#4895ef', '#4cc9f0', '#3a86ff', '#7209b7', '#f72585', '#e63946'];
+    const maxSessions = Math.max(...data.dates.map(d => d.sessions ? d.sessions.length : 0));
+
+    // Build datasets: each session index becomes a stacked bar dataset
+    const datasets = [];
+    for (let si = 0; si < maxSessions; si++) {
+        const values = data.dates.map(d => {
+            if (d.sessions && d.sessions[si]) {
+                return (d.sessions[si].duration_seconds / 60).toFixed(1);
+            }
+            return 0;
+        });
+        datasets.push({
+            label: '第' + (si + 1) + '组',
+            data: values,
+            backgroundColor: sessionColors[si % sessionColors.length],
+            borderRadius: si === 0 ? 2 : 0,
+        });
+    }
+
+    // Total as bar overlay (thin bar at 100% width)
+    const totals = data.dates.map(d => (d.total_seconds / 60).toFixed(1));
+
+    if (trainingChart) { trainingChart.destroy(); }
+
+    const ctx = document.getElementById('trainingChart').getContext('2d');
+    trainingChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: datasets.length > 1, labels: { boxWidth: 10, font: { size: 9 } } },
+                tooltip: {
+                    callbacks: {
+                        afterBody: function(context) {
+                            const idx = context[0].dataIndex;
+                            const day = data.dates[idx];
+                            if (!day) return '';
+                            let lines = ['总时长: ' + (day.total_seconds / 60).toFixed(1) + ' 分钟'];
+                            if (day.sessions) {
+                                day.sessions.forEach((s, i) => {
+                                    lines.push('组' + (i+1) + ': ' + (s.duration_seconds / 60).toFixed(1) + '分 (' + (s.start || '?') + (s.end ? '-' + s.end : '') + ')');
+                                });
+                            }
+                            return lines;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { stacked: true, ticks: { font: { size: 11 } } },
+                y: {
+                    stacked: true,
+                    beginAtZero: true,
+                    title: { display: true, text: '分钟', font: { size: 11 } },
+                    ticks: { font: { size: 10 } }
+                }
+            }
+        },
+        plugins: [{
+            afterDraw: function(chart) {
+                // Draw total duration as text above each bar stack
+                const ctx2 = chart.ctx;
+                chart.data.datasets.forEach((dataset, i) => {
+                    const meta = chart.getDatasetMeta(i);
+                    meta.data.forEach((bar, idx) => {
+                        if (i === chart.data.datasets.length - 1 && totals[idx] > 0) {
+                            ctx2.fillStyle = '#333';
+                            ctx2.font = 'bold 11px sans-serif';
+                            ctx2.textAlign = 'center';
+                            ctx2.fillText(totals[idx] + '分', bar.x, bar.y - 6);
+                        }
+                    });
+                });
+            }
+        }]
+    });
+}
+
+// Init
+function checkActiveTraining() {
+    fetch('/admin/api/training/active?tool=pelvic_floor')
+    .then(r => r.json())
+    .then(data => {
+        if (data.active && data.id) {
+            trainingActive = true;
+            trainingId = data.id;
+            const btn = document.getElementById('training-btn');
+            btn.className = 'training-btn stop';
+            btn.textContent = '结束训练';
+            document.getElementById('training-status').textContent = '训练中...';
+            timerSeconds = 0;
+            if (timerInterval) clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                timerSeconds++;
+                document.getElementById('training-timer').textContent = formatTime(timerSeconds);
+            }, 1000);
+        }
+        loadTrainingStats();
+    });
+}
+
+checkActiveTraining();
+</script>
+{% endblock %}

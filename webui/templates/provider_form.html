@@ -1,0 +1,379 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if provider else 'Add' }} Provider{% endblock %}
+{% block content %}
+<div style="max-width:640px">
+    <h1 style="font-size:20px;font-weight:600;margin-bottom:20px">{{ 'Edit' if provider else 'Add' }} Provider</h1>
+    <div class="card">
+        <form method="POST">
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" name="name" id="provider_name" value="{{ provider.name if provider else '' }}" required placeholder="e.g. Qwen Test">
+            </div>
+            <div class="form-group">
+                <label>Provider Type</label>
+                <select name="provider_type" id="provider_type">
+                    <option value="openai" {% if provider and provider.provider_type == 'openai' %}selected{% endif %}>OpenAI Compatible</option>
+                    <option value="anthropic" {% if provider and provider.provider_type == 'anthropic' %}selected{% endif %}>Anthropic Compatible</option>
+                    <option value="gemini" {% if provider and provider.provider_type == 'gemini' %}selected{% endif %}>Google Gemini</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Base URL</label>
+                <input type="url" name="base_url" id="base_url" value="{{ provider.base_url if provider else '' }}" required placeholder="https://qwen.aikit.club/v1">
+            </div>
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="password" name="api_key" id="api_key" value="{{ provider.api_key if provider else '' }}" placeholder="sk-..." {{ 'required' if not provider }}>
+            </div>
+            <div class="form-group">
+                <label>
+                    Models (one per line)
+                    <button type="button" class="btn btn-sm" style="background:#eee;margin-left:8px"
+                            onclick="fetchModels(event)">Fetch from Provider</button>
+                    <span id="fetch-status" style="font-size:12px;color:#888;margin-left:8px"></span>
+                </label>
+                <textarea name="models" id="models" rows="5" placeholder="gpt-4o&#10;claude-sonnet-4-20250514&#10;qwen3.6-plus">{{ provider.models | join('\n') if provider else '' }}</textarea>
+            </div>
+            <div class="form-group">
+                <label>
+                    Test Connection
+                    <button type="button" class="btn btn-sm" style="background:#eee;margin-left:8px"
+                            onclick="testConnection(event)">Test</button>
+                    <span id="test-status" style="font-size:12px;margin-left:8px"></span>
+                </label>
+            </div>
+            <div class="form-group">
+                <label>Priority (lower = higher priority)</label>
+                <input type="number" name="priority" value="{{ provider.priority if provider else 0 }}" min="0">
+            </div>
+            <div class="form-group" style="display:flex;align-items:center;gap:8px">
+                <input type="checkbox" name="is_active" id="is_active" {% if not provider or provider.is_active %}checked{% endif %}>
+                <label for="is_active" style="margin:0">Active</label>
+            </div>
+            <div style="display:flex;gap:8px">
+                <button type="submit" class="btn btn-primary">Save</button>
+                <a href="{{ url_for('providers') }}" class="btn" style="background:#eee;color:#333">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Models Multi-select Modal -->
+<div id="models-modal" class="modal-backdrop" style="display:none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Select Models</h3>
+            <span class="modal-close" onclick="closeModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <div class="search-bar-container" style="margin-bottom: 12px; display: flex; gap: 8px;">
+                <input type="text" id="model-search" placeholder="Search models..." style="flex:1; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px;" oninput="filterModels()">
+            </div>
+            <div class="selection-actions" style="margin-bottom: 12px; display: flex; gap: 8px; align-items: center;">
+                <button type="button" class="btn btn-sm" style="background:#eee;" onclick="selectAllModels(true)">Select All</button>
+                <button type="button" class="btn btn-sm" style="background:#eee;" onclick="selectAllModels(false)">Select None</button>
+                <span id="selected-count" style="font-size: 13px; color: #666; margin-left: auto; align-self: center;">Selected: 0</span>
+            </div>
+            <div id="models-list" class="models-list-container">
+                <!-- Model items will be rendered here dynamically -->
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn" style="background:#eee;color:#333" onclick="closeModal()">Cancel</button>
+            <button type="button" class="btn btn-primary" onclick="confirmSelectedModels()">Confirm</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+.modal-content {
+    background: white;
+    padding: 24px;
+    border-radius: 8px;
+    width: 100%;
+    max-width: 520px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    display: flex;
+    flex-direction: column;
+    max-height: 85vh;
+}
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 12px;
+}
+.modal-header h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #333;
+}
+.modal-close {
+    font-size: 20px;
+    cursor: pointer;
+    color: #999;
+    line-height: 1;
+}
+.modal-close:hover {
+    color: #333;
+}
+.modal-body {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+.models-list-container {
+    flex: 1;
+    overflow-y: auto;
+    border: 1px solid #eee;
+    border-radius: 6px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: #fafafa;
+    min-height: 200px;
+}
+.model-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    background: white;
+    border: 1px solid #f0f0f0;
+    transition: background 0.15s, border-color 0.15s;
+}
+.model-item:hover {
+    background: #f0f4ff;
+    border-color: #d2dbff;
+}
+.model-item input[type="checkbox"] {
+    cursor: pointer;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+}
+.model-item label {
+    margin: 0;
+    cursor: pointer;
+    font-size: 13.5px;
+    font-weight: normal;
+    color: #333;
+    word-break: break-all;
+    user-select: none;
+    flex: 1;
+}
+.modal-footer {
+    margin-top: 16px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    border-top: 1px solid #eee;
+    padding-top: 12px;
+}
+</style>
+
+<script>
+let fetchedModelsList = [];
+
+function getProviderConfig() {
+    return {
+        base_url: document.getElementById('base_url').value,
+        api_key: document.getElementById('api_key').value,
+        provider_type: document.getElementById('provider_type').value,
+    };
+}
+
+async function fetchModels(e) {
+    const cfg = getProviderConfig();
+    if (!cfg.base_url || !cfg.api_key) {
+        document.getElementById('fetch-status').innerHTML = '<span style="color:#e63946">Fill URL and API Key first</span>';
+        return;
+    }
+    const btn = e ? e.target : event.target;
+    btn.disabled = true;
+    document.getElementById('fetch-status').innerHTML = 'Fetching...';
+    try {
+        const resp = await fetch('{{ url_for("provider_fetch_models") }}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(cfg)
+        });
+        const data = await resp.json();
+        if (data.models && data.models.length > 0) {
+            // Read existing models from the textarea to keep them checked in the dialog
+            const currentModels = document.getElementById('models').value
+                .split('\n')
+                .map(m => m.trim())
+                .filter(m => m.length > 0);
+            
+            // Build the models list
+            fetchedModelsList = data.models.map(m => {
+                return {
+                    name: m,
+                    selected: currentModels.includes(m),
+                    visible: true
+                };
+            });
+            
+            // Show the modal
+            openModal();
+            document.getElementById('fetch-status').innerHTML = `<span style="color:#155724">Found ${data.models.length} models</span>`;
+        } else if (data.error) {
+            document.getElementById('fetch-status').innerHTML = `<span style="color:#e63946">${data.error}</span>`;
+        } else {
+            document.getElementById('fetch-status').innerHTML = '<span style="color:#e63946">No models found</span>';
+        }
+    } catch (err) {
+        document.getElementById('fetch-status').innerHTML = `<span style="color:#e63946">${err.message}</span>`;
+    }
+    btn.disabled = false;
+}
+
+function openModal() {
+    document.getElementById('model-search').value = '';
+    filterModels(); // reset filter and render
+    document.getElementById('models-modal').style.display = 'flex';
+}
+
+function closeModal() {
+    document.getElementById('models-modal').style.display = 'none';
+}
+
+function renderModelsList() {
+    const container = document.getElementById('models-list');
+    container.innerHTML = '';
+    
+    let selectedCount = 0;
+    fetchedModelsList.forEach((m, idx) => {
+        if (m.selected) {
+            selectedCount++;
+        }
+        
+        if (!m.visible) return;
+        
+        const itemDiv = document.createElement('div');
+        itemDiv.className = 'model-item';
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = `model-chk-${idx}`;
+        checkbox.checked = m.selected;
+        checkbox.addEventListener('change', (e) => {
+            m.selected = e.target.checked;
+            updateSelectedCount();
+        });
+        
+        const label = document.createElement('label');
+        label.htmlFor = `model-chk-${idx}`;
+        label.textContent = m.name;
+        
+        // Clicking anywhere on the item row should also toggle the checkbox
+        itemDiv.addEventListener('click', (e) => {
+            if (e.target !== checkbox && e.target !== label) {
+                checkbox.checked = !checkbox.checked;
+                m.selected = checkbox.checked;
+                updateSelectedCount();
+            }
+        });
+        
+        itemDiv.appendChild(checkbox);
+        itemDiv.appendChild(label);
+        container.appendChild(itemDiv);
+    });
+    
+    document.getElementById('selected-count').textContent = `Selected: ${selectedCount}`;
+}
+
+function updateSelectedCount() {
+    const selectedCount = fetchedModelsList.filter(m => m.selected).length;
+    document.getElementById('selected-count').textContent = `Selected: ${selectedCount}`;
+}
+
+function filterModels() {
+    const query = document.getElementById('model-search').value.toLowerCase().trim();
+    fetchedModelsList.forEach(m => {
+        m.visible = m.name.toLowerCase().includes(query);
+    });
+    renderModelsList();
+}
+
+function selectAllModels(select) {
+    fetchedModelsList.forEach(m => {
+        if (m.visible) {
+            m.selected = select;
+        }
+    });
+    renderModelsList();
+}
+
+function confirmSelectedModels() {
+    const selected = fetchedModelsList
+        .filter(m => m.selected)
+        .map(m => m.name);
+    
+    // Set to textarea
+    document.getElementById('models').value = selected.join('\n');
+    closeModal();
+}
+
+async function testConnection(e) {
+    const cfg = getProviderConfig();
+    if (!cfg.base_url || !cfg.api_key) {
+        document.getElementById('test-status').innerHTML = '<span style="color:#e63946">Fill URL and API Key first</span>';
+        return;
+    }
+    // Use the first model from the models textarea
+    const models = document.getElementById('models').value
+        .split('\n')
+        .map(m => m.trim())
+        .filter(m => m.length > 0);
+    cfg.model = models.length > 0 ? models[0] : 'gpt-3.5-turbo';
+    const btn = e ? e.target : event.target;
+    btn.disabled = true;
+    document.getElementById('test-status').innerHTML = 'Testing...';
+    try {
+        const resp = await fetch('{{ url_for("provider_test") }}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(cfg)
+        });
+        const data = await resp.json();
+        if (data.success) {
+            document.getElementById('test-status').innerHTML = `<span style="color:#155724">OK (${data.latency_ms}ms)</span>`;
+        } else {
+            document.getElementById('test-status').innerHTML = `<span style="color:#e63946">${data.error || 'Failed'}</span>`;
+        }
+    } catch (err) {
+        document.getElementById('test-status').innerHTML = `<span style="color:#e63946">${err.message}</span>`;
+    }
+    btn.disabled = false;
+}
+
+// Close modal when clicking on the backdrop
+window.addEventListener('click', function(e) {
+    const modal = document.getElementById('models-modal');
+    if (e.target === modal) {
+        closeModal();
+    }
+});
+</script>
+{% endblock %}
