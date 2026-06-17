@@ -39,12 +39,17 @@
 
 <div class="filter-bar">
     <label>Time Range</label>
-    <select id="hours-select" onchange="loadStats()">
+    <select id="hours-select" onchange="onHoursChange()">
         <option value="1">Last Hour</option>
+        <option value="3">Last 3 Hours</option>
         <option value="6">Last 6 Hours</option>
+        <option value="12">Last 12 Hours</option>
         <option value="24" selected>Last 24 Hours</option>
         <option value="168">Last 7 Days</option>
     </select>
+    <input type="datetime-local" id="start-time" onchange="onDateChange()" style="padding:4px 8px;border:1px solid #ddd;border-radius:6px;font-size:13px">
+    <span style="color:#999">~</span>
+    <input type="datetime-local" id="end-time" onchange="onDateChange()" style="padding:4px 8px;border:1px solid #ddd;border-radius:6px;font-size:13px">
     <label>Model</label>
     <select id="model-select" onchange="onModelChange()">
         <option value="">All Models</option>
@@ -164,6 +169,41 @@ let chartRequests = null;
 let chartTokens = null;
 let statsData = null;
 let allModels = null;
+let modelNameMap = {};
+let datesEdited = false;
+
+function displayName(name) {
+    return modelNameMap[name] || name;
+}
+
+function loadModelNameMap() {
+    fetch('/admin/api/providers')
+        .then(r => r.json())
+        .then(providers => {
+            const map = {};
+            if (Array.isArray(providers)) {
+                providers.forEach(p => {
+                    if (p.models && Array.isArray(p.models)) {
+                        p.models.forEach(m => {
+                            if (m.name && m.display_name) {
+                                map[m.name] = m.display_name;
+                                if (m.name !== m.display_name) {
+                                    map[m.display_name] = m.display_name;
+                                }
+                            }
+                        });
+                    }
+                });
+            }
+            modelNameMap = map;
+            // Re-render if data already loaded
+            if (statsData) {
+                renderModelTable(statsData);
+                populateModelSelect();
+            }
+        })
+        .catch(() => {});
+}
 
 function saveDashboardState() {
     localStorage.setItem('dashboard_hours', document.getElementById('hours-select').value);
@@ -172,15 +212,49 @@ function saveDashboardState() {
     } else {
         localStorage.removeItem('dashboard_model');
     }
+    const startVal = document.getElementById('start-time').value;
+    const endVal = document.getElementById('end-time').value;
+    if (startVal) localStorage.setItem('dashboard_start', startVal);
+    if (endVal) localStorage.setItem('dashboard_end', endVal);
+}
+
+function fmtLocal(d) {
+    const pad = n => String(n).padStart(2, '0');
+    return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+}
+
+function initDateInputs() {
+    const hours = parseInt(document.getElementById('hours-select').value) || 24;
+    const now = new Date();
+    document.getElementById('end-time').value = fmtLocal(now);
+    document.getElementById('start-time').value = fmtLocal(new Date(now - hours * 60 * 60 * 1000));
+}
+
+function onDateChange() {
+    datesEdited = true;
+    loadStats();
+}
+
+function onHoursChange() {
+    datesEdited = false;
+    initDateInputs();
+    loadStats();
 }
 
 function loadStats() {
+    if (document.getElementById('auto-refresh').checked && !datesEdited) {
+        initDateInputs();
+    }
     const hours = document.getElementById('hours-select').value;
     const model = selectedModel;
     document.getElementById('refresh-status').textContent = 'Loading...';
     saveDashboardState();
 
+    const startInput = document.getElementById('start-time').value;
+    const endInput = document.getElementById('end-time').value;
     let url = `/admin/api/stats?hours=${hours}`;
+    if (startInput) url += `&start=${new Date(startInput).toISOString()}`;
+    if (endInput) url += `&end=${new Date(endInput).toISOString()}`;
     if (model) url += `&model=${encodeURIComponent(model)}`;
 
     fetch(url)
@@ -203,9 +277,9 @@ function loadStats() {
             renderModelTable(data);
             populateModelSelect();
             renderCharts(data, model);
-            if (model) {
-                loadModelLogs(model, hours);
-            }
+if (model) {
+    loadModelLogs(model);
+}
             document.getElementById('refresh-status').textContent = 'Updated ' + new Date().toLocaleTimeString();
         })
         .catch(() => {
@@ -238,13 +312,13 @@ function populateModelSelect() {
     (allModels || []).forEach(m => {
         const opt = document.createElement('option');
         opt.value = m;
-        opt.textContent = m;
+        opt.textContent = displayName(m);
         sel.appendChild(opt);
     });
     if (selectedModel && !(allModels || []).includes(selectedModel)) {
         const opt = document.createElement('option');
         opt.value = selectedModel;
-        opt.textContent = selectedModel;
+        opt.textContent = displayName(selectedModel);
         sel.appendChild(opt);
     }
     sel.value = selectedModel || '';
@@ -255,7 +329,7 @@ function onModelChange() {
     const hours = document.getElementById('hours-select').value;
     saveDashboardState();
     if (selectedModel) {
-        loadModelLogs(selectedModel, hours);
+        loadModelLogs(selectedModel);
     } else {
         closeLogPanel();
     }
@@ -274,7 +348,7 @@ function renderModelTable(data) {
         const tps = m.avg_tokens_per_sec != null ? m.avg_tokens_per_sec.toFixed(1) : '-';
         const opts = m.output_toks_per_sec != null ? m.output_toks_per_sec.toFixed(1) : '-';
         return `<tr>
-            <td><strong>${m.model}</strong></td>
+            <td><strong>${displayName(m.model)}</strong></td>
             <td class="num">${(m.total_requests || 0).toLocaleString()}</td>
             <td class="num" style="color:${m.error_count > 0 ? '#e63946' : '#888'}">${m.error_count || 0}</td>
             <td class="num">${avgLat}</td>
@@ -287,12 +361,19 @@ function renderModelTable(data) {
     }).join('');
 }
 
-function loadModelLogs(model, hours) {
-    document.getElementById('log-model-name').textContent = model;
+function loadModelLogs(model) {
+    document.getElementById('log-model-name').textContent = displayName(model);
     document.getElementById('log-panel').classList.add('visible');
     document.getElementById('log-table-body').innerHTML = '<tr><td colspan="9" style="text-align:center;color:#999;padding:12px;">Loading logs...</td></tr>';
 
-    fetch(`/admin/api/logs?model=${encodeURIComponent(model)}&hours=${hours}&limit=100`)
+    const hours = document.getElementById('hours-select').value;
+    const startInput = document.getElementById('start-time').value;
+    const endInput = document.getElementById('end-time').value;
+    let url = `/admin/api/logs?model=${encodeURIComponent(model)}&hours=${hours}&limit=100`;
+    if (startInput) url += `&start=${new Date(startInput).toISOString()}`;
+    if (endInput) url += `&end=${new Date(endInput).toISOString()}`;
+
+    fetch(url)
         .then(r => r.json())
         .then(data => {
             if (!data || data.length === 0) {
@@ -350,7 +431,7 @@ function buildStackedBarData(labels, buckets, valueKey, groupKey, totalOnly) {
             return match ? (match[valueKey] || 0) : 0;
         });
         return [{
-            label: selectedModel || 'Requests',
+            label: displayName(selectedModel) || 'Requests',
             data: data,
             backgroundColor: '#4361ee',
             borderRadius: 2
@@ -368,7 +449,7 @@ function buildStackedBarData(labels, buckets, valueKey, groupKey, totalOnly) {
             return match ? (match[valueKey] || 0) : 0;
         });
         return {
-            label: model,
+            label: displayName(model),
             data: data,
             backgroundColor: modelToColor[model],
             borderRadius: 0,
@@ -396,7 +477,7 @@ function renderCharts(data, model) {
     const reqDatasets = isAll
         ? buildStackedBarData(labels, data.hourly_by_model, 'count', 'model', false)
         : [{
-            label: model,
+            label: displayName(model),
             data: labels.map(h => {
                 const match = data.hourly_by_model.find(b => b.hour === h && b.model === model);
                 return match ? match.count : 0;
@@ -429,7 +510,7 @@ function renderCharts(data, model) {
             tokModels.forEach((m, i) => { tokModelColors[m] = colorForModel(m, i); });
 
             const tokDatasets = tokModels.map(tm => ({
-                label: tm,
+                label: displayName(tm),
                 data: labels.map(h => {
                     const match = data.hourly_tokens_by_model.find(b => b.hour === h && b.model === tm);
                     return match ? (match.prompt_tokens + match.completion_tokens) : 0;
@@ -521,6 +602,12 @@ function toggleAutoRefresh() {
 // Restore preferences from localStorage
 const savedHours = localStorage.getItem('dashboard_hours');
 if (savedHours) document.getElementById('hours-select').value = savedHours;
+const savedStart = localStorage.getItem('dashboard_start');
+const savedEnd = localStorage.getItem('dashboard_end');
+if (savedStart) document.getElementById('start-time').value = savedStart;
+if (savedEnd) document.getElementById('end-time').value = savedEnd;
+if (!savedStart) initDateInputs();
+if (savedStart && savedHours) datesEdited = true;
 const savedModel = localStorage.getItem('dashboard_model');
 if (savedModel) {
     selectedModel = savedModel;
@@ -531,5 +618,6 @@ if (localStorage.getItem('dashboard_auto_refresh') === '1') {
     refreshTimer = setInterval(loadStats, 15000);
 }
 loadStats();
+loadModelNameMap();
 </script>
 {% endblock %}

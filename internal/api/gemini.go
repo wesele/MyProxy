@@ -264,7 +264,6 @@ func translateGeminiChunkToOpenAI(chunkData []byte, model string) []byte {
 
 	if finishReason != "" {
 		openAIChunk["choices"].([]map[string]interface{})[0]["finish_reason"] = finishReason
-		openAIChunk["choices"].([]map[string]interface{})[0]["delta"] = map[string]string{}
 	}
 
 	if geminiChunk.UsageMetadata != nil {
@@ -344,13 +343,26 @@ func (h *GeminiHandler) ChatCompletions(c *gin.Context) {
 	defer resp.Body.Close()
 
 	if reqBody.Stream || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
-		c.Writer.WriteHeader(resp.StatusCode)
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
+		c.Writer.WriteHeader(resp.StatusCode)
 
 		reader := newGeminiStreamReader(resp.Body, modelName)
-		io.Copy(c.Writer, reader)
+		flusher, canFlush := c.Writer.(http.Flusher)
+		buf := make([]byte, 4096)
+		for {
+			n, err := reader.Read(buf)
+			if n > 0 {
+				c.Writer.Write(buf[:n])
+				if canFlush {
+					flusher.Flush()
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
 		return
 	}
 
@@ -397,6 +409,7 @@ func parseGeminiUsage(body []byte) (int, int, int) {
 type geminiStreamReader struct {
 	reader    io.ReadCloser
 	buf       []byte
+	overflow  []byte
 	done      bool
 	model     string
 }
@@ -409,56 +422,86 @@ func newGeminiStreamReader(reader io.ReadCloser, model string) *geminiStreamRead
 }
 
 func (r *geminiStreamReader) Read(p []byte) (int, error) {
-	if r.done {
+	if r.done && len(r.buf) == 0 && len(r.overflow) == 0 {
 		return 0, io.EOF
 	}
 
-	if len(r.buf) > 0 {
-		n := copy(p, r.buf)
-		r.buf = r.buf[n:]
+	if len(r.overflow) > 0 {
+		n := copy(p, r.overflow)
+		r.overflow = r.overflow[n:]
 		return n, nil
 	}
 
-	buf := make([]byte, 4096)
-	n, err := r.reader.Read(buf)
-	if err != nil && err != io.EOF {
-		return 0, err
+	for !bytes.Contains(r.buf, []byte("\n")) {
+		tmp := make([]byte, 4096)
+		n, err := r.reader.Read(tmp)
+		if err != nil && err != io.EOF {
+			return 0, err
+		}
+		if n > 0 {
+			r.buf = append(r.buf, tmp[:n]...)
+		}
+		if err == io.EOF {
+			r.done = true
+			break
+		}
 	}
-	if n == 0 || err == io.EOF {
-		r.done = true
+
+	if len(r.buf) == 0 {
 		return 0, io.EOF
 	}
 
-	data := buf[:n]
-	var result []byte
-
-	lines := bytes.Split(data, []byte("\n"))
-	for _, line := range lines {
+	var result bytes.Buffer
+	for {
+		idx := bytes.IndexByte(r.buf, '\n')
+		if idx < 0 {
+			break
+		}
+		line := r.buf[:idx]
+		r.buf = r.buf[idx+1:]
 		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
+		if !bytes.HasPrefix(line, []byte("data: ")) {
 			continue
 		}
-		if bytes.HasPrefix(line, []byte("data: ")) {
-			chunkData := bytes.TrimSpace(line[6:])
-			if len(chunkData) == 0 || bytes.Equal(chunkData, []byte("[DONE]")) {
-				continue
-			}
-			translated := translateGeminiChunkToOpenAI(chunkData, r.model)
-			if translated != nil {
-				result = append(result, []byte("data: ")...)
-				result = append(result, translated...)
-				result = append(result, []byte("\n\n")...)
-			}
+		chunkData := bytes.TrimSpace(line[6:])
+		if len(chunkData) == 0 || bytes.Equal(chunkData, []byte("[DONE]")) {
+			continue
+		}
+		translated := translateGeminiChunkToOpenAI(chunkData, r.model)
+		if translated != nil {
+			result.WriteString("data: ")
+			result.Write(translated)
+			result.WriteString("\n\n")
 		}
 	}
 
-	if len(result) == 0 {
+	// Process remaining data without trailing newline (e.g. connection closed mid-event)
+	if r.done && len(r.buf) > 0 {
+		line := bytes.TrimSpace(r.buf)
+		if bytes.HasPrefix(line, []byte("data: ")) {
+			chunkData := bytes.TrimSpace(line[6:])
+			if len(chunkData) > 0 && !bytes.Equal(chunkData, []byte("[DONE]")) {
+				translated := translateGeminiChunkToOpenAI(chunkData, r.model)
+				if translated != nil {
+					result.WriteString("data: ")
+					result.Write(translated)
+					result.WriteString("\n\n")
+				}
+			}
+		}
+		r.buf = nil
+	}
+
+	if result.Len() == 0 {
+		if r.done {
+			return 0, io.EOF
+		}
 		return 0, nil
 	}
 
-	n = copy(p, result)
-	if n < len(result) {
-		r.buf = append([]byte{}, result[n:]...)
+	n := copy(p, result.Bytes())
+	if n < result.Len() {
+		r.overflow = append([]byte{}, result.Bytes()[n:]...)
 	}
 	return n, nil
 }

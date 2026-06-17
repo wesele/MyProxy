@@ -147,8 +147,11 @@ def upload_files(client):
 
 
 def kill_old_service(client):
-    print("\n[3/8] 停止旧服务...")
+    print("\n[3/8] 停止旧服务 + 清理孤儿 Flask...")
     kill_port_8080(client)
+    # 杀死之前部署残留的孤儿 Flask 进程
+    ssh_run(client, "pkill -f 'python3 app.py' 2>/dev/null; pkill -f 'python app.py' 2>/dev/null", timeout=5)
+    ssh_run(client, "sleep 2", timeout=5)
 
 
 def start_service(client):

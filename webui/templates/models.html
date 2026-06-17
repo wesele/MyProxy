@@ -58,9 +58,9 @@
     </div>
     <div class="model-list" id="models-{{ loop.index }}">
         {% for m in p.models %}
-        <div class="model-tag{% if loop.index == 1 %}{% endif %}" data-model="{{ m }}" data-provider="{{ p.name }}" onclick="toggleModel(this)" id="tag-{{ p.name|replace('/','_')|replace(' ','_') }}-{{ m|replace('/','_')|replace(' ','_') }}">
-            <span class="status status-idle" id="status-{{ p.name|replace('/','_')|replace(' ','_') }}-{{ m|replace('/','_')|replace(' ','_') }}"></span>
-            {{ m }}
+        <div class="model-tag{% if loop.index == 1 %}{% endif %}" data-model="{{ m.name }}" data-provider="{{ p.name }}" onclick="toggleModel(this)" id="tag-{{ p.name|replace('/','_')|replace(' ','_') }}-{{ m.name|replace('/','_')|replace(' ','_') }}">
+            <span class="status status-idle" id="status-{{ p.name|replace('/','_')|replace(' ','_') }}-{{ m.name|replace('/','_')|replace(' ','_') }}"></span>
+            {{ m.display_name if m.display_name else m.name }}
         </div>
         {% endfor %}
     </div>

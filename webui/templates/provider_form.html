@@ -1,68 +1,123 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Edit' if provider else 'Add' }} Provider{% endblock %}
 {% block content %}
-<div style="max-width:640px">
+<div style="max-width:1200px">
     <h1 style="font-size:20px;font-weight:600;margin-bottom:20px">{{ 'Edit' if provider else 'Add' }} Provider</h1>
-    <div class="card">
-        <form method="POST">
-            <div class="form-group">
-                <label>Name</label>
-                <input type="text" name="name" id="provider_name" value="{{ provider.name if provider else '' }}" required placeholder="e.g. Qwen Test">
+    <div class="card" style="padding:0">
+        <div class="split-layout">
+            <div class="split-left">
+                <form method="POST" id="provider-form">
+                    <div style="padding:20px">
+                        <h2 style="font-size:16px;font-weight:600;margin-bottom:16px;color:#555">Provider Settings</h2>
+                        <div class="form-group">
+                            <label>Name</label>
+                            <input type="text" name="name" id="provider_name" value="{{ provider.name if provider else '' }}" required placeholder="e.g. Qwen Test">
+                        </div>
+                        <div class="form-group">
+                            <label>Provider Type</label>
+                            <select name="provider_type" id="provider_type">
+                                <option value="openai" {% if provider and provider.provider_type == 'openai' %}selected{% endif %}>OpenAI Compatible</option>
+                                <option value="anthropic" {% if provider and provider.provider_type == 'anthropic' %}selected{% endif %}>Anthropic Compatible</option>
+                                <option value="gemini" {% if provider and provider.provider_type == 'gemini' %}selected{% endif %}>Google Gemini</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Base URL</label>
+                            <input type="url" name="base_url" id="base_url" value="{{ provider.base_url if provider else '' }}" required placeholder="https://qwen.aikit.club/v1">
+                        </div>
+<div class="form-group">
+<label>API Key</label>
+<div style="display:flex;gap:8px;align-items:center">
+<input type="password" name="api_key" id="api_key" value="{{ provider.api_key if provider else '' }}" placeholder="sk-..." {{ 'required' if not provider }} style="flex:1">
+<button type="button" id="toggle-key-btn" class="btn btn-sm" style="background:#eee;white-space:nowrap" {% if not provider %}title="Type a key first"{% endif %}>Show</button>
+</div>
+</div>
+                        <div class="form-group">
+                            <label>Priority (lower = higher priority)</label>
+                            <input type="number" name="priority" value="{{ provider.priority if provider else 0 }}" min="0">
+                        </div>
+
+                        <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                            <h2 style="font-size:16px;font-weight:600;margin:0;color:#555">Models</h2>
+                            <div style="display:flex;gap:6px">
+                                <button type="button" class="btn btn-sm" style="background:#eee" onclick="addModel()">+ Add</button>
+                                <button type="button" class="btn btn-sm" style="background:#eee" onclick="fetchModels()">Fetch</button>
+                            </div>
+                        </div>
+                        <span id="fetch-status" style="font-size:12px;color:#888"></span>
+
+                        <div id="models-list-left" class="models-left-list"></div>
+
+                        <div style="display:flex;gap:8px;margin-top:16px">
+                            <button type="submit" class="btn btn-primary">Save</button>
+                            <a href="{{ url_for('providers') }}" class="btn" style="background:#eee;color:#333">Cancel</a>
+                        </div>
+
+                        <input type="hidden" name="models_json" id="models_json" value="[]">
+                    </div>
+                </form>
             </div>
-            <div class="form-group">
-                <label>Provider Type</label>
-                <select name="provider_type" id="provider_type">
-                    <option value="openai" {% if provider and provider.provider_type == 'openai' %}selected{% endif %}>OpenAI Compatible</option>
-                    <option value="anthropic" {% if provider and provider.provider_type == 'anthropic' %}selected{% endif %}>Anthropic Compatible</option>
-                    <option value="gemini" {% if provider and provider.provider_type == 'gemini' %}selected{% endif %}>Google Gemini</option>
-                </select>
+
+            <div class="split-right" id="model-config-panel">
+                <div style="padding:20px">
+                    <h2 style="font-size:16px;font-weight:600;margin-bottom:16px;color:#555">Model Configuration</h2>
+                    <div id="model-config-empty" style="text-align:center;color:#999;padding:60px 20px;font-size:14px">
+                        Select a model from the left panel to configure its parameters
+                    </div>
+                    <div id="model-config-form" style="display:none">
+                        <input type="hidden" id="config-model-name">
+                        <div class="form-group">
+                            <label>Display Name <span style="font-weight:normal;color:#999">(custom alias for this model)</span></label>
+                            <input type="text" id="config-display-name" placeholder="e.g. GPT-4o Latest">
+                        </div>
+                        <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+                        <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:#555">Context Parameters</h3>
+                        <div class="form-group">
+                            <label>Max Output Tokens</label>
+                            <input type="number" id="config-max-tokens" placeholder="e.g. 4096" min="0">
+                        </div>
+                        <div class="form-group">
+                            <label>Max Input / Context Window <span style="font-weight:normal;color:#999">(max input tokens)</span></label>
+                            <input type="number" id="config-max-input-tokens" placeholder="e.g. 128000" min="0">
+                        </div>
+                        <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+                        <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:#555">
+                            Extra Body JSON
+                            <span style="font-weight:normal;color:#999;font-size:12px">(merged into every request)</span>
+                        </h3>
+                        <div class="form-group">
+                            <textarea id="config-extra-body" rows="4" style="font-family:monospace;font-size:12px" placeholder='e.g.&#10;{&#10;  &quot;thinking&quot;: {&quot;type&quot;: &quot;enabled&quot;, &quot;budget_tokens&quot;: 16000}&#10;}'></textarea>
+                        </div>
+                        <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+                        <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:#555">Token Pricing (per 1M tokens)</h3>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                            <div class="form-group" style="margin:0">
+                                <label>Input Price</label>
+                                <input type="number" id="config-input-price" step="0.001" min="0" placeholder="e.g. 2.50">
+                            </div>
+                            <div class="form-group" style="margin:0">
+                                <label>Output Price</label>
+                                <input type="number" id="config-output-price" step="0.001" min="0" placeholder="e.g. 10.00">
+                            </div>
+                        </div>
+                        <div class="form-group" style="margin-top:8px">
+                            <label>Input Cache Price <span style="font-weight:normal;color:#999">(cached input, if applicable)</span></label>
+                            <input type="number" id="config-input-cache-price" step="0.001" min="0" placeholder="e.g. 1.25">
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="form-group">
-                <label>Base URL</label>
-                <input type="url" name="base_url" id="base_url" value="{{ provider.base_url if provider else '' }}" required placeholder="https://qwen.aikit.club/v1">
-            </div>
-            <div class="form-group">
-                <label>API Key</label>
-                <input type="password" name="api_key" id="api_key" value="{{ provider.api_key if provider else '' }}" placeholder="sk-..." {{ 'required' if not provider }}>
-            </div>
-            <div class="form-group">
-                <label>
-                    Models (one per line)
-                    <button type="button" class="btn btn-sm" style="background:#eee;margin-left:8px"
-                            onclick="fetchModels(event)">Fetch from Provider</button>
-                    <span id="fetch-status" style="font-size:12px;color:#888;margin-left:8px"></span>
-                </label>
-                <textarea name="models" id="models" rows="5" placeholder="gpt-4o&#10;claude-sonnet-4-20250514&#10;qwen3.6-plus">{{ provider.models | join('\n') if provider else '' }}</textarea>
-            </div>
-            <div class="form-group">
-                <label>
-                    Test Connection
-                    <button type="button" class="btn btn-sm" style="background:#eee;margin-left:8px"
-                            onclick="testConnection(event)">Test</button>
-                    <span id="test-status" style="font-size:12px;margin-left:8px"></span>
-                </label>
-            </div>
-            <div class="form-group">
-                <label>Priority (lower = higher priority)</label>
-                <input type="number" name="priority" value="{{ provider.priority if provider else 0 }}" min="0">
-            </div>
-            <div class="form-group" style="display:flex;align-items:center;gap:8px">
-                <input type="checkbox" name="is_active" id="is_active" {% if not provider or provider.is_active %}checked{% endif %}>
-                <label for="is_active" style="margin:0">Active</label>
-            </div>
-            <div style="display:flex;gap:8px">
-                <button type="submit" class="btn btn-primary">Save</button>
-                <a href="{{ url_for('providers') }}" class="btn" style="background:#eee;color:#333">Cancel</a>
-            </div>
-        </form>
+        </div>
     </div>
 </div>
 
-<!-- Models Multi-select Modal -->
+<!-- Fetch Models Modal -->
 <div id="models-modal" class="modal-backdrop" style="display:none;">
     <div class="modal-content">
         <div class="modal-header">
-            <h3>Select Models</h3>
+            <h3>Select Models to Add</h3>
             <span class="modal-close" onclick="closeModal()">&times;</span>
         </div>
         <div class="modal-body">
@@ -74,9 +129,7 @@
                 <button type="button" class="btn btn-sm" style="background:#eee;" onclick="selectAllModels(false)">Select None</button>
                 <span id="selected-count" style="font-size: 13px; color: #666; margin-left: auto; align-self: center;">Selected: 0</span>
             </div>
-            <div id="models-list" class="models-list-container">
-                <!-- Model items will be rendered here dynamically -->
-            </div>
+            <div id="models-list" class="models-list-container"></div>
         </div>
         <div class="modal-footer">
             <button type="button" class="btn" style="background:#eee;color:#333" onclick="closeModal()">Cancel</button>
@@ -86,6 +139,87 @@
 </div>
 
 <style>
+.split-layout {
+    display: flex;
+    min-height: 500px;
+}
+.split-left {
+    width: 50%;
+    border-right: 1px solid #eee;
+    overflow-y: auto;
+    background: #fff;
+}
+.split-right {
+    width: 50%;
+    overflow-y: auto;
+    background: #fafafa;
+}
+.models-left-list {
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    max-height: 360px;
+    overflow-y: auto;
+    background: #fafafa;
+}
+.model-left-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    border-bottom: 1px solid #f0f0f0;
+    background: white;
+    transition: background 0.15s;
+    user-select: none;
+}
+.model-left-item:last-child {
+    border-bottom: none;
+}
+.model-left-item:hover {
+    background: #f0f4ff;
+}
+.model-left-item.selected {
+    background: #e8edff;
+    border-left: 3px solid #4361ee;
+}
+.model-left-item .model-name {
+    flex: 1;
+    font-size: 13.5px;
+    color: #333;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.model-left-item .model-badge {
+    font-size: 11px;
+    color: #888;
+    background: #f0f0f0;
+    padding: 2px 8px;
+    border-radius: 10px;
+    flex-shrink: 0;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.model-left-item .model-del-btn {
+    font-size: 16px;
+    color: #ccc;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+    flex-shrink: 0;
+    display: none;
+}
+.model-left-item:hover .model-del-btn {
+    display: block;
+    color: #e63946;
+}
+.model-left-item .model-del-btn:hover {
+    color: #c1121f;
+}
 .modal-backdrop {
     position: fixed;
     top: 0;
@@ -192,6 +326,188 @@
 </style>
 
 <script>
+let models = [];
+let selectedModelId = null;
+
+function genId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function initFromProvider() {
+    {% if provider and provider.models %}
+    models = {{ provider.models | tojson }};
+    models.forEach(m => {
+        if (!m.id) m.id = genId();
+        if (!m.display_name) m.display_name = m.name;
+    });
+    {% endif %}
+    renderModelsLeft();
+    syncModelsJSON();
+}
+
+// ======== Left Panel: Model List ========
+function renderModelsLeft() {
+    const container = document.getElementById('models-list-left');
+    container.innerHTML = '';
+    models.forEach((m) => {
+        const div = document.createElement('div');
+        div.className = 'model-left-item' + (m.id === selectedModelId ? ' selected' : '');
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'model-name';
+        nameSpan.textContent = m.display_name || m.name;
+
+        const badge = document.createElement('span');
+        badge.className = 'model-badge';
+        badge.textContent = m.name;
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'model-del-btn';
+        delBtn.textContent = '\u00d7';
+        delBtn.title = 'Delete model';
+        delBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteModel(m.id);
+        });
+
+        div.appendChild(nameSpan);
+        div.appendChild(badge);
+        div.appendChild(delBtn);
+
+        div.addEventListener('click', () => {
+            selectedModelId = m.id;
+            renderModelsLeft();
+            showModelConfig(m);
+        });
+
+        container.appendChild(div);
+    });
+}
+
+function deleteModel(id) {
+    models = models.filter(m => m.id !== id);
+    if (selectedModelId === id) {
+        selectedModelId = null;
+        document.getElementById('model-config-empty').style.display = 'block';
+        document.getElementById('model-config-form').style.display = 'none';
+    }
+    renderModelsLeft();
+    syncModelsJSON();
+}
+
+function addModel() {
+    const name = prompt('Enter model name (e.g. gpt-4o):');
+    if (!name || !name.trim()) return;
+    const trimmed = name.trim();
+    models.push({
+        id: genId(),
+        name: trimmed,
+        display_name: trimmed,
+        max_tokens: 0,
+        max_input_tokens: 0,
+        input_price: 0,
+        output_price: 0,
+        input_cache_price: 0,
+        extra_body: null
+    });
+    renderModelsLeft();
+    syncModelsJSON();
+}
+
+// ======== Right Panel: Model Config ========
+function showModelConfig(m) {
+    document.getElementById('model-config-empty').style.display = 'none';
+    document.getElementById('model-config-form').style.display = 'block';
+
+    document.getElementById('config-model-name').value = m.name;
+    document.getElementById('config-display-name').value = m.display_name || '';
+    document.getElementById('config-max-tokens').value = m.max_tokens || '';
+    document.getElementById('config-max-input-tokens').value = m.max_input_tokens || '';
+    document.getElementById('config-input-price').value = m.input_price || '';
+    document.getElementById('config-output-price').value = m.output_price || '';
+    document.getElementById('config-input-cache-price').value = m.input_cache_price || '';
+
+    try {
+        document.getElementById('config-extra-body').value = m.extra_body ? JSON.stringify(m.extra_body, null, 2) : '';
+    } catch(e) {
+        document.getElementById('config-extra-body').value = '';
+    }
+}
+
+function saveCurrentModelConfig() {
+    if (!selectedModelId) return;
+    const m = models.find(x => x.id === selectedModelId);
+    if (!m) return;
+
+    m.display_name = document.getElementById('config-display-name').value.trim() || m.name;
+    m.max_tokens = parseInt(document.getElementById('config-max-tokens').value) || 0;
+    m.max_input_tokens = parseInt(document.getElementById('config-max-input-tokens').value) || 0;
+    m.input_price = parseFloat(document.getElementById('config-input-price').value) || 0;
+    m.output_price = parseFloat(document.getElementById('config-output-price').value) || 0;
+    m.input_cache_price = parseFloat(document.getElementById('config-input-cache-price').value) || 0;
+
+    const extraBodyStr = document.getElementById('config-extra-body').value.trim();
+    if (extraBodyStr) {
+        try {
+            m.extra_body = JSON.parse(extraBodyStr);
+        } catch(e) {
+            // invalid JSON while editing — just don't update
+        }
+    } else {
+        m.extra_body = null;
+    }
+
+    renderModelsLeft();
+    syncModelsJSON();
+}
+
+document.getElementById('provider-form').addEventListener('submit', function(e) {
+    // Validate all models — check textarea for the currently selected one
+    for (const m of models) {
+        let raw = m.extra_body;
+        if (m.id === selectedModelId) {
+            const val = document.getElementById('config-extra-body').value.trim();
+            if (val) {
+                try { raw = JSON.parse(val); } catch(_) {
+                    alert('Invalid Extra Body JSON for model "' + (m.display_name || m.name) + '". Fix it before saving.');
+                    e.preventDefault(); return;
+                }
+            } else {
+                raw = null;
+            }
+        } else if (raw && typeof raw !== 'object') {
+            alert('Invalid Extra Body JSON for model "' + (m.display_name || m.name) + '". Fix it before saving.');
+            e.preventDefault(); return;
+        }
+    }
+    syncModelsJSON();
+});
+
+document.addEventListener('input', function(e) {
+    const f = ['config-display-name','config-max-tokens','config-max-input-tokens','config-input-price','config-output-price','config-input-cache-price','config-extra-body'];
+    if (f.includes(e.target.id)) saveCurrentModelConfig();
+});
+
+// ======== Sync to Hidden Field ========
+function syncModelsJSON() {
+    const out = models.map(m => {
+        const o = {
+            id: m.id,
+            name: m.name,
+            display_name: m.display_name || m.name,
+        };
+        if (m.max_tokens) o.max_tokens = m.max_tokens;
+        if (m.max_input_tokens) o.max_input_tokens = m.max_input_tokens;
+        if (m.extra_body) o.extra_body = m.extra_body;
+        if (m.input_price) o.input_price = m.input_price;
+        if (m.output_price) o.output_price = m.output_price;
+        if (m.input_cache_price) o.input_cache_price = m.input_cache_price;
+        return o;
+    });
+    document.getElementById('models_json').value = JSON.stringify(out);
+}
+
+// ======== Fetch Models ========
 let fetchedModelsList = [];
 
 function getProviderConfig() {
@@ -202,13 +518,13 @@ function getProviderConfig() {
     };
 }
 
-async function fetchModels(e) {
+async function fetchModels() {
     const cfg = getProviderConfig();
     if (!cfg.base_url || !cfg.api_key) {
         document.getElementById('fetch-status').innerHTML = '<span style="color:#e63946">Fill URL and API Key first</span>';
         return;
     }
-    const btn = e ? e.target : event.target;
+    const btn = event.target;
     btn.disabled = true;
     document.getElementById('fetch-status').innerHTML = 'Fetching...';
     try {
@@ -219,24 +535,22 @@ async function fetchModels(e) {
         });
         const data = await resp.json();
         if (data.models && data.models.length > 0) {
-            // Read existing models from the textarea to keep them checked in the dialog
-            const currentModels = document.getElementById('models').value
-                .split('\n')
-                .map(m => m.trim())
-                .filter(m => m.length > 0);
-            
-            // Build the models list
-            fetchedModelsList = data.models.map(m => {
+            fetchedModelsList = data.models.map(fm => {
                 return {
-                    name: m,
-                    selected: currentModels.includes(m),
+                    name: fm.name || fm,
+                    display_name: (fm.display_name || fm.name || fm),
+                    max_tokens: fm.max_tokens || 0,
+                    max_input_tokens: fm.max_input_tokens || 0,
+                    input_price: fm.input_price || 0,
+                    output_price: fm.output_price || 0,
+                    input_cache_price: fm.input_cache_price || 0,
+                    extra_body: fm.extra_body || null,
+                    selected: true,
                     visible: true
                 };
             });
-            
-            // Show the modal
-            openModal();
             document.getElementById('fetch-status').innerHTML = `<span style="color:#155724">Found ${data.models.length} models</span>`;
+            openModal();
         } else if (data.error) {
             document.getElementById('fetch-status').innerHTML = `<span style="color:#e63946">${data.error}</span>`;
         } else {
@@ -248,9 +562,10 @@ async function fetchModels(e) {
     btn.disabled = false;
 }
 
+// ======== Fetch Modal ========
 function openModal() {
     document.getElementById('model-search').value = '';
-    filterModels(); // reset filter and render
+    filterModels();
     document.getElementById('models-modal').style.display = 'flex';
 }
 
@@ -258,35 +573,26 @@ function closeModal() {
     document.getElementById('models-modal').style.display = 'none';
 }
 
-function renderModelsList() {
+function renderModalList() {
     const container = document.getElementById('models-list');
     container.innerHTML = '';
-    
     let selectedCount = 0;
     fetchedModelsList.forEach((m, idx) => {
-        if (m.selected) {
-            selectedCount++;
-        }
-        
+        if (m.selected) selectedCount++;
         if (!m.visible) return;
-        
         const itemDiv = document.createElement('div');
         itemDiv.className = 'model-item';
-        
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
-        checkbox.id = `model-chk-${idx}`;
+        checkbox.id = 'model-chk-' + idx;
         checkbox.checked = m.selected;
-        checkbox.addEventListener('change', (e) => {
-            m.selected = e.target.checked;
+        checkbox.addEventListener('change', () => {
+            m.selected = checkbox.checked;
             updateSelectedCount();
         });
-        
         const label = document.createElement('label');
-        label.htmlFor = `model-chk-${idx}`;
-        label.textContent = m.name;
-        
-        // Clicking anywhere on the item row should also toggle the checkbox
+        label.htmlFor = 'model-chk-' + idx;
+        label.textContent = m.display_name || m.name;
         itemDiv.addEventListener('click', (e) => {
             if (e.target !== checkbox && e.target !== label) {
                 checkbox.checked = !checkbox.checked;
@@ -294,86 +600,102 @@ function renderModelsList() {
                 updateSelectedCount();
             }
         });
-        
         itemDiv.appendChild(checkbox);
         itemDiv.appendChild(label);
         container.appendChild(itemDiv);
     });
-    
-    document.getElementById('selected-count').textContent = `Selected: ${selectedCount}`;
+    document.getElementById('selected-count').textContent = 'Selected: ' + selectedCount;
 }
 
 function updateSelectedCount() {
-    const selectedCount = fetchedModelsList.filter(m => m.selected).length;
-    document.getElementById('selected-count').textContent = `Selected: ${selectedCount}`;
+    document.getElementById('selected-count').textContent = 'Selected: ' + fetchedModelsList.filter(m => m.selected).length;
 }
 
 function filterModels() {
-    const query = document.getElementById('model-search').value.toLowerCase().trim();
+    const q = document.getElementById('model-search').value.toLowerCase().trim();
     fetchedModelsList.forEach(m => {
-        m.visible = m.name.toLowerCase().includes(query);
+        m.visible = (m.name || '').toLowerCase().includes(q) || (m.display_name || '').toLowerCase().includes(q);
     });
-    renderModelsList();
+    renderModalList();
 }
 
 function selectAllModels(select) {
-    fetchedModelsList.forEach(m => {
-        if (m.visible) {
-            m.selected = select;
-        }
-    });
-    renderModelsList();
+    fetchedModelsList.forEach(m => { if (m.visible) m.selected = select; });
+    renderModalList();
 }
 
 function confirmSelectedModels() {
-    const selected = fetchedModelsList
-        .filter(m => m.selected)
-        .map(m => m.name);
-    
-    // Set to textarea
-    document.getElementById('models').value = selected.join('\n');
+    const selected = fetchedModelsList.filter(m => m.selected);
+    selected.forEach(fm => {
+        models.push({
+            id: genId(),
+            name: fm.name,
+            display_name: fm.display_name || fm.name,
+            max_tokens: fm.max_tokens || 0,
+            max_input_tokens: fm.max_input_tokens || 0,
+            input_price: fm.input_price || 0,
+            output_price: fm.output_price || 0,
+            input_cache_price: fm.input_cache_price || 0,
+            extra_body: fm.extra_body || null
+        });
+    });
+    renderModelsLeft();
+    syncModelsJSON();
     closeModal();
 }
 
-async function testConnection(e) {
-    const cfg = getProviderConfig();
-    if (!cfg.base_url || !cfg.api_key) {
-        document.getElementById('test-status').innerHTML = '<span style="color:#e63946">Fill URL and API Key first</span>';
-        return;
-    }
-    // Use the first model from the models textarea
-    const models = document.getElementById('models').value
-        .split('\n')
-        .map(m => m.trim())
-        .filter(m => m.length > 0);
-    cfg.model = models.length > 0 ? models[0] : 'gpt-3.5-turbo';
-    const btn = e ? e.target : event.target;
-    btn.disabled = true;
-    document.getElementById('test-status').innerHTML = 'Testing...';
-    try {
-        const resp = await fetch('{{ url_for("provider_test") }}', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(cfg)
-        });
-        const data = await resp.json();
-        if (data.success) {
-            document.getElementById('test-status').innerHTML = `<span style="color:#155724">OK (${data.latency_ms}ms)</span>`;
-        } else {
-            document.getElementById('test-status').innerHTML = `<span style="color:#e63946">${data.error || 'Failed'}</span>`;
-        }
-    } catch (err) {
-        document.getElementById('test-status').innerHTML = `<span style="color:#e63946">${err.message}</span>`;
-    }
-    btn.disabled = false;
-}
-
-// Close modal when clicking on the backdrop
 window.addEventListener('click', function(e) {
-    const modal = document.getElementById('models-modal');
-    if (e.target === modal) {
-        closeModal();
-    }
+    if (e.target === document.getElementById('models-modal')) closeModal();
 });
+
+document.addEventListener('DOMContentLoaded', initFromProvider);
+
+const toggleKeyBtn = document.getElementById('toggle-key-btn');
+const apiKeyInput = document.getElementById('api_key');
+if (toggleKeyBtn && apiKeyInput) {
+toggleKeyBtn.addEventListener('click', async function() {
+  if (toggleKeyBtn.dataset.loading === '1') return;
+
+  if (toggleKeyBtn.textContent.trim() === 'Show') {
+    toggleKeyBtn.textContent = 'Loading...';
+    toggleKeyBtn.disabled = true;
+    toggleKeyBtn.dataset.loading = '1';
+
+    const providerId = {{ provider.id if provider else 'null' }};
+    if (!providerId) {
+      toggleKeyBtn.textContent = 'Show';
+      toggleKeyBtn.disabled = false;
+      toggleKeyBtn.dataset.loading = '0';
+      const raw = prompt('Paste the full API key here:');
+      if (raw !== null && raw.trim()) {
+        apiKeyInput.value = raw.trim();
+        apiKeyInput.type = 'text';
+        toggleKeyBtn.textContent = 'Hide';
+        toggleKeyBtn.disabled = false;
+      }
+      return;
+    }
+
+    try {
+      const resp = await fetch(`/admin/api/providers/${providerId}/api-key`);
+      const data = await resp.json();
+      if (data.api_key && !data.api_key.includes('****')) {
+        apiKeyInput.value = data.api_key;
+        apiKeyInput.type = 'text';
+        toggleKeyBtn.textContent = 'Hide';
+      }
+    } catch (err) {
+      console.error('Failed to load API key:', err);
+      toggleKeyBtn.textContent = 'Show';
+    } finally {
+      toggleKeyBtn.disabled = false;
+      toggleKeyBtn.dataset.loading = '0';
+    }
+  } else {
+    apiKeyInput.type = 'password';
+    toggleKeyBtn.textContent = 'Show';
+  }
+});
+}
 </script>
 {% endblock %}

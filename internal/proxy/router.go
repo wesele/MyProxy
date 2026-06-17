@@ -19,7 +19,7 @@ func NewRouter() *Router {
 }
 
 func (r *Router) Refresh() error {
-	providers, err := db.ListActiveProviders()
+	providers, err := db.ListProviders()
 	if err != nil {
 		return err
 	}
@@ -37,7 +37,7 @@ func (r *Router) FindProvider(model string) (*models.Provider, error) {
 	for i := range providers {
 		p := &providers[i]
 		for _, m := range p.Models {
-			if m == model {
+			if m.Name == model || m.DisplayName == model {
 				cp := *p
 				return &cp, nil
 			}
@@ -49,11 +49,11 @@ func (r *Router) FindProvider(model string) (*models.Provider, error) {
 	for i := range providers {
 		p := &providers[i]
 		for _, m := range p.Models {
-			if strings.HasPrefix(model, m) {
+			if strings.HasPrefix(model, m.Name) {
 				cp := *p
 				return &cp, nil
 			}
-			if m == "*" {
+			if m.Name == "*" {
 				wildcardIdx = i
 				hasWildcard = true
 			}

@@ -38,7 +38,6 @@ function importProviders(input) {
                 <th>Type</th>
                 <th>Base URL</th>
                 <th>Models</th>
-                <th>Status</th>
                 <th>Actions</th>
             </tr>
         </thead>
@@ -48,14 +47,7 @@ function importProviders(input) {
                 <td><strong>{{ p.name }}</strong></td>
                 <td><span class="badge badge-active">{{ p.provider_type }}</span></td>
                 <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.base_url }}</td>
-                <td>{{ p.models | join(', ') }}</td>
-                <td>
-                    {% if p.is_active %}
-                    <span class="badge badge-active">Active</span>
-                    {% else %}
-                    <span class="badge badge-inactive">Inactive</span>
-                    {% endif %}
-                </td>
+                <td>{{ p.models | map(attribute='display_name') | join(', ') if p.models else '' }}</td>
                 <td class="inline-flex">
                     <a href="{{ url_for('provider_edit', pid=p.id) }}" class="btn btn-primary btn-sm">Edit</a>
                     <form method="POST" action="{{ url_for('provider_delete', pid=p.id) }}" style="display:inline" onsubmit="return confirm('Delete this provider?')">

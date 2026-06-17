@@ -38,7 +38,14 @@ def dashboard():
 def stats():
     hours = request.args.get("hours", "24")
     model = request.args.get("model", "")
-    result = api_call("GET", f"/stats?hours={hours}&model={model}")
+    start = request.args.get("start", "")
+    end = request.args.get("end", "")
+    path = f"/stats?hours={hours}&model={model}"
+    if start:
+        path += f"&start={start}"
+    if end:
+        path += f"&end={end}"
+    result = api_call("GET", path)
     return jsonify(result)
 
 
@@ -47,7 +54,14 @@ def model_logs():
     model = request.args.get("model", "")
     hours = request.args.get("hours", "24")
     limit = request.args.get("limit", "100")
-    result = api_call("GET", f"/logs?model={model}&hours={hours}&limit={limit}")
+    start = request.args.get("start", "")
+    end = request.args.get("end", "")
+    path = f"/logs?model={model}&hours={hours}&limit={limit}"
+    if start:
+        path += f"&start={start}"
+    if end:
+        path += f"&end={end}"
+    result = api_call("GET", path)
     return jsonify(result)
 
 
@@ -60,14 +74,17 @@ def providers():
 @app.route("/admin/providers/add", methods=["GET", "POST"])
 def provider_add():
     if request.method == "POST":
-        models = [m.strip() for m in request.form.get("models", "").split("\n") if m.strip()]
+        models_raw = request.form.get("models_json", "[]")
+        try:
+            models = json.loads(models_raw)
+        except json.JSONDecodeError:
+            models = []
         payload = {
             "name": request.form["name"],
             "provider_type": request.form["provider_type"],
             "base_url": request.form["base_url"],
             "api_key": request.form["api_key"],
             "models": models,
-            "is_active": request.form.get("is_active") == "on",
             "priority": int(request.form.get("priority", 0)),
         }
         api_call("POST", "/providers", payload)
@@ -78,14 +95,17 @@ def provider_add():
 @app.route("/admin/providers/<int:pid>/edit", methods=["GET", "POST"])
 def provider_edit(pid):
     if request.method == "POST":
-        models = [m.strip() for m in request.form.get("models", "").split("\n") if m.strip()]
+        models_raw = request.form.get("models_json", "[]")
+        try:
+            models = json.loads(models_raw)
+        except json.JSONDecodeError:
+            models = []
         payload = {
             "name": request.form["name"],
             "provider_type": request.form["provider_type"],
             "base_url": request.form["base_url"],
             "api_key": request.form.get("api_key", ""),
             "models": models,
-            "is_active": request.form.get("is_active") == "on",
             "priority": int(request.form.get("priority", 0)),
         }
         api_call("PUT", f"/providers/{pid}", payload)
@@ -198,6 +218,12 @@ def provider_fetch_models():
 def provider_test():
     data = request.get_json()
     result = api_call("POST", "/providers/test", data)
+    return jsonify(result)
+
+
+@app.route("/admin/api/providers/<int:pid>/api-key")
+def provider_api_key(pid):
+    result = api_call("GET", f"/providers/{pid}?show_key=1")
     return jsonify(result)
 
 

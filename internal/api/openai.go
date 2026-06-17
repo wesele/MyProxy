@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -29,28 +30,53 @@ func (h *OpenAIHandler) SetGeminiHandler(gh *GeminiHandler) {
 }
 
 func (h *OpenAIHandler) ListModels(c *gin.Context) {
-	providers, err := db.ListActiveProviders()
+	providers, err := db.ListProviders()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list providers"})
 		return
 	}
 
 	type Model struct {
-		ID      string `json:"id"`
-		Object  string `json:"object"`
-		Created int64  `json:"created"`
-		OwnedBy string `json:"owned_by"`
+		ID              string  `json:"id"`
+		Object          string  `json:"object"`
+		Created         int64   `json:"created"`
+		OwnedBy         string  `json:"owned_by"`
+		DisplayName     string  `json:"display_name,omitempty"`
+		MaxTokens       int     `json:"max_tokens,omitempty"`
+		MaxInputTokens  int     `json:"max_input_tokens,omitempty"`
+		InputPrice      float64 `json:"input_price,omitempty"`
+		OutputPrice     float64 `json:"output_price,omitempty"`
+		InputCachePrice float64 `json:"input_cache_price,omitempty"`
 	}
 
 	var models []Model
 	for _, p := range providers {
 		for _, m := range p.Models {
-			models = append(models, Model{
-				ID:      m,
+			model := Model{
+				ID:      m.DisplayName,
 				Object:  "model",
 				Created: 1700000000,
 				OwnedBy: p.Name,
-			})
+			}
+			if m.DisplayName != m.Name {
+				model.DisplayName = m.DisplayName
+			}
+			if m.MaxTokens > 0 {
+				model.MaxTokens = m.MaxTokens
+			}
+			if m.MaxInputTokens > 0 {
+				model.MaxInputTokens = m.MaxInputTokens
+			}
+			if m.InputPrice > 0 {
+				model.InputPrice = m.InputPrice
+			}
+			if m.OutputPrice > 0 {
+				model.OutputPrice = m.OutputPrice
+			}
+			if m.InputCachePrice > 0 {
+				model.InputCachePrice = m.InputCachePrice
+			}
+			models = append(models, model)
 		}
 	}
 
@@ -87,18 +113,40 @@ func (h *OpenAIHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	// Resolve display name to upstream model name
+	upstreamModel := reqBody.Model
+	for _, m := range provider.Models {
+		if m.DisplayName == reqBody.Model && m.Name != reqBody.Model {
+			upstreamModel = m.Name
+			break
+		}
+	}
+
 	c.Set("provider_id", provider.ID)
 	if entry, exists := c.Get("log_entry"); exists {
 		entry.(*middleware.LogEntry).Model = reqBody.Model
 	}
 
+	// Replace model in body with upstream name if different
+	var finalBody []byte
+	if upstreamModel != reqBody.Model {
+		var bodyMap map[string]interface{}
+		if err := json.Unmarshal(body, &bodyMap); err == nil {
+			bodyMap["model"] = upstreamModel
+			finalBody, _ = json.Marshal(bodyMap)
+		}
+	}
+	if finalBody == nil {
+		finalBody = body
+	}
+
 	if provider.ProviderType == "gemini" && h.geminiHandler != nil {
-		c.Request.Body = io.NopCloser(strings.NewReader(string(body)))
+		c.Request.Body = io.NopCloser(bytes.NewReader(finalBody))
 		h.geminiHandler.ChatCompletions(c)
 		return
 	}
 
-	c.Request.Body = io.NopCloser(strings.NewReader(string(body)))
+	c.Request.Body = io.NopCloser(bytes.NewReader(finalBody))
 
 	h.forwarder.Forward(c, provider, "/chat/completions")
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -55,12 +56,33 @@ func (h *ClaudeHandler) Messages(c *gin.Context) {
 		return
 	}
 
+	// Resolve display name to upstream model name
+	upstreamModel := model
+	for _, m := range provider.Models {
+		if m.DisplayName == model && m.Name != model {
+			upstreamModel = m.Name
+			break
+		}
+	}
+
 	c.Set("provider_id", provider.ID)
 	if entry, exists := c.Get("log_entry"); exists {
 		entry.(*middleware.LogEntry).Model = model
 	}
 
-	c.Request.Body = io.NopCloser(strings.NewReader(string(body)))
+	var finalBody []byte
+	if upstreamModel != model {
+		var bodyMap map[string]interface{}
+		if err := json.Unmarshal(body, &bodyMap); err == nil {
+			bodyMap["model"] = upstreamModel
+			finalBody, _ = json.Marshal(bodyMap)
+		}
+	}
+	if finalBody == nil {
+		finalBody = body
+	}
+
+	c.Request.Body = io.NopCloser(bytes.NewReader(finalBody))
 
 	h.forwarder.Forward(c, provider, "/messages")
 }

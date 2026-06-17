@@ -201,7 +201,7 @@ func (h *AdminHandler) TestModels(c *gin.Context) {
 			}
 
 			contentType := resp.Header.Get("Content-Type")
-			reader := bufio.NewReader(resp.Body)
+			reader := bufio.NewReaderSize(resp.Body, 64*1024)
 			peek, _ := reader.Peek(6)
 			isSSE := len(peek) >= 6 && string(peek[:6]) == "data: "
 
@@ -551,7 +551,9 @@ func (h *AdminHandler) GetProvider(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "provider not found"})
 		return
 	}
-	p.APIKey = maskAPIKey(p.APIKey)
+	if c.Query("show_key") != "1" {
+		p.APIKey = maskAPIKey(p.APIKey)
+	}
 	c.JSON(http.StatusOK, p)
 }
 
@@ -684,6 +686,26 @@ type providerTestReq struct {
 	Model        string `json:"model"`
 }
 
+type upstreamModelInfo struct {
+	ID              string  `json:"id"`
+	Object          string  `json:"object,omitempty"`
+	Created         int64   `json:"created,omitempty"`
+	OwnedBy         string  `json:"owned_by,omitempty"`
+	MaxTokens       int     `json:"max_tokens,omitempty"`
+	MaxInputTokens  int     `json:"max_input_tokens,omitempty"`
+	ContextWindow   int     `json:"context_window,omitempty"`
+	InputPrice      float64 `json:"input_price,omitempty"`
+	OutputPrice     float64 `json:"output_price,omitempty"`
+	InputCachePrice float64 `json:"input_cache_price,omitempty"`
+	Pricing         *struct {
+		Prompt     float64 `json:"prompt,omitempty"`
+		Completion float64 `json:"completion,omitempty"`
+		Input      float64 `json:"input,omitempty"`
+		Output     float64 `json:"output,omitempty"`
+		CacheInput float64 `json:"cache_input,omitempty"`
+	} `json:"pricing,omitempty"`
+}
+
 func (h *AdminHandler) FetchProviderModels(c *gin.Context) {
 	var req providerTestReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -706,7 +728,6 @@ func (h *AdminHandler) FetchProviderModels(c *gin.Context) {
 		httpReq.Header.Set("x-api-key", req.APIKey)
 		httpReq.Header.Set("anthropic-version", "2023-06-01")
 	} else if req.ProviderType == "gemini" {
-		// Gemini uses key as query param; rebuild URL
 		modelURL = baseURL + "/models?key=" + req.APIKey
 		httpReq, _ = http.NewRequest("GET", modelURL, nil)
 	} else {
@@ -723,44 +744,99 @@ func (h *AdminHandler) FetchProviderModels(c *gin.Context) {
 
 	body, _ := io.ReadAll(resp.Body)
 
-	var listResp struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &listResp); err != nil || len(listResp.Data) == 0 {
-		var modelsResp struct {
-			Models []struct {
-				Name string `json:"name"`
-			} `json:"models"`
-		}
-		if err := json.Unmarshal(body, &modelsResp); err == nil && len(modelsResp.Models) > 0 {
-			var models []string
-			for _, m := range modelsResp.Models {
-				// Strip "models/" prefix if present (Gemini format)
-				name := m.Name
-				if len(name) > 7 && name[:7] == "models/" {
-					name = name[7:]
-				}
-				models = append(models, name)
-			}
-			c.JSON(http.StatusOK, gin.H{"models": models})
-			return
-		}
-
-		if resp.StatusCode != 200 {
-			c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("upstream returned %d: %s", resp.StatusCode, string(body))})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"models": []string{}, "note": "could not parse model list"})
+	richModels := parseUpstreamModels(body)
+	if richModels != nil {
+		c.JSON(http.StatusOK, gin.H{"models": richModels})
 		return
 	}
 
-	var models []string
-	for _, m := range listResp.Data {
-		models = append(models, m.ID)
+	if resp.StatusCode != 200 {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("upstream returned %d: %s", resp.StatusCode, string(body))})
+		return
 	}
-	c.JSON(http.StatusOK, gin.H{"models": models})
+	c.JSON(http.StatusOK, gin.H{"models": []models.ModelConfig{}, "note": "could not parse model list"})
+}
+
+func parseUpstreamModels(body []byte) []models.ModelConfig {
+	// Try OpenAI format: {"data": [{"id": "...", ...}]}
+	var openAIList struct {
+		Data []upstreamModelInfo `json:"data"`
+	}
+	if json.Unmarshal(body, &openAIList) == nil && len(openAIList.Data) > 0 {
+		result := make([]models.ModelConfig, 0, len(openAIList.Data))
+		for _, m := range openAIList.Data {
+		mc := models.ModelConfig{
+			Name:        m.ID,
+			DisplayName: m.ID,
+		}
+		if m.MaxTokens > 0 {
+			mc.MaxTokens = m.MaxTokens
+		}
+		if m.MaxInputTokens > 0 {
+			mc.MaxInputTokens = m.MaxInputTokens
+		} else if m.ContextWindow > 0 {
+			mc.MaxInputTokens = m.ContextWindow
+		}
+		if m.Pricing != nil {
+			if m.Pricing.Input > 0 {
+				mc.InputPrice = m.Pricing.Input
+			} else if m.Pricing.Prompt > 0 {
+				mc.InputPrice = m.Pricing.Prompt
+			}
+			if m.Pricing.Output > 0 {
+				mc.OutputPrice = m.Pricing.Output
+			} else if m.Pricing.Completion > 0 {
+				mc.OutputPrice = m.Pricing.Completion
+			}
+		}
+		if m.InputPrice > 0 {
+			mc.InputPrice = m.InputPrice
+		}
+		if m.OutputPrice > 0 {
+			mc.OutputPrice = m.OutputPrice
+		}
+		if m.InputCachePrice > 0 {
+			mc.InputCachePrice = m.InputCachePrice
+		} else if m.Pricing != nil && m.Pricing.CacheInput > 0 {
+			mc.InputCachePrice = m.Pricing.CacheInput
+		}
+		result = append(result, mc)
+		}
+		return result
+	}
+
+	// Try Gemini format: {"models": [{"name": "...", ...}]}
+	var geminiList struct {
+		Models []struct {
+			Name       string `json:"name"`
+			Version    string `json:"version"`
+			InputPrice  float64 `json:"input_price,omitempty"`
+			OutputPrice float64 `json:"output_price,omitempty"`
+		} `json:"models"`
+	}
+	if json.Unmarshal(body, &geminiList) == nil && len(geminiList.Models) > 0 {
+		result := make([]models.ModelConfig, 0, len(geminiList.Models))
+		for _, m := range geminiList.Models {
+			name := m.Name
+			if len(name) > 7 && name[:7] == "models/" {
+				name = name[7:]
+			}
+		mc := models.ModelConfig{
+			Name:        name,
+			DisplayName: name,
+		}
+			if m.InputPrice > 0 {
+				mc.InputPrice = m.InputPrice
+			}
+			if m.OutputPrice > 0 {
+				mc.OutputPrice = m.OutputPrice
+			}
+			result = append(result, mc)
+		}
+		return result
+	}
+
+	return nil
 }
 
 func (h *AdminHandler) TestProvider(c *gin.Context) {
@@ -850,14 +926,33 @@ func (h *AdminHandler) TestProvider(c *gin.Context) {
 }
 
 func (h *AdminHandler) GetStats(c *gin.Context) {
+	startStr := c.Query("start")
+	endStr := c.Query("end")
 	hoursStr := c.DefaultQuery("hours", "24")
-	hours, err := strconv.Atoi(hoursStr)
-	if err != nil || hours <= 0 {
-		hours = 24
-	}
 	modelFilter := c.Query("model")
 
-	stats, err := db.GetStats(hours, modelFilter)
+	end := time.Now()
+	if endStr != "" {
+		if parsed, err := time.Parse(time.RFC3339, endStr); err == nil {
+			end = parsed
+		}
+	}
+
+	var start time.Time
+	if startStr != "" {
+		if parsed, err := time.Parse(time.RFC3339, startStr); err == nil {
+			start = parsed
+		}
+	}
+	if start.IsZero() {
+		hours, err := strconv.Atoi(hoursStr)
+		if err != nil || hours <= 0 {
+			hours = 24
+		}
+		start = end.Add(-time.Duration(hours) * time.Hour)
+	}
+
+	stats, err := db.GetStats(start, end, modelFilter)
 	if err != nil {
 		h.logger.Error("get stats", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -867,23 +962,47 @@ func (h *AdminHandler) GetStats(c *gin.Context) {
 }
 
 func (h *AdminHandler) GetModelLogs(c *gin.Context) {
-	model := c.Query("model")
+model := c.Query("model")
 	if model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "model query param required"})
 		return
 	}
+
+	startStr := c.Query("start")
+	endStr := c.Query("end")
 	hoursStr := c.DefaultQuery("hours", "24")
-	hours, err := strconv.Atoi(hoursStr)
-	if err != nil || hours <= 0 {
-		hours = 24
+
+	end := time.Now()
+	if endStr != "" {
+		if parsed, err := time.Parse(time.RFC3339, endStr); err == nil {
+			end = parsed
+		}
 	}
+
+	var start time.Time
+	if startStr != "" {
+		if parsed, err := time.Parse(time.RFC3339, startStr); err == nil {
+			start = parsed
+		}
+	}
+	if start.IsZero() {
+		hours, err := strconv.Atoi(hoursStr)
+		if err != nil || hours <= 0 {
+			hours = 24
+		}
+		start = end.Add(-time.Duration(hours) * time.Hour)
+	}
+
 	limitStr := c.DefaultQuery("limit", "100")
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit <= 0 {
 		limit = 100
 	}
+	if limit > 1000 {
+		limit = 1000
+	}
 
-	logs, err := db.GetModelLogs(model, hours, limit)
+	logs, err := db.GetModelLogs(model, start, end, limit)
 	if err != nil {
 		h.logger.Error("get model logs", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

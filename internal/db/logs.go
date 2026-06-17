@@ -19,7 +19,7 @@ func InsertRequestLog(log *models.RequestLog) error {
 		log.PromptTokens, log.CompletionTokens, log.InputCacheTokens,
 		log.LatencyMs, log.StatusCode, log.IsError,
 		log.RequestSummary, log.ResponseSummary,
-		log.CreatedAt.Format(time.RFC3339Nano))
+		log.CreatedAt.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
@@ -47,15 +47,18 @@ func modelClause(model string) string {
 	return "model = ?"
 }
 
-func GetStats(hours int, modelFilter string) (*models.StatsResponse, error) {
-	since := time.Now().Add(-time.Duration(hours) * time.Hour)
+func GetStats(start, end time.Time, modelFilter string) (*models.StatsResponse, error) {
 	mClause := modelClause(modelFilter)
+
+	// Format timestamps to UTC for consistent string comparison
+	startStr := start.UTC().Format(time.RFC3339Nano)
+	endStr := end.UTC().Format(time.RFC3339Nano)
 
 	var stats models.StatsResponse
 	stats.ModelBreakdown = make(map[string]int64)
 
 	// Aggregate
-	args := []interface{}{since}
+	args := []interface{}{startStr, endStr}
 	if modelFilter != "" {
 		args = append(args, modelFilter)
 	}
@@ -63,25 +66,25 @@ func GetStats(hours int, modelFilter string) (*models.StatsResponse, error) {
 		COUNT(*),
 		COALESCE(AVG(CASE WHEN is_error=0 THEN latency_ms END), 0),
 		COALESCE(SUM(prompt_tokens+completion_tokens), 0)
-		FROM request_logs WHERE created_at >= ? AND `+mClause, args...).
+		FROM request_logs WHERE created_at >= ? AND created_at <= ? AND `+mClause, args...).
 		Scan(&stats.TotalRequests, &stats.AvgLatencyMs, &stats.TotalTokens)
 	if err != nil {
 		return nil, err
 	}
 
 	var errorCount int64
-	eargs := []interface{}{since}
+	eargs := []interface{}{startStr, endStr}
 	if modelFilter != "" {
 		eargs = append(eargs, modelFilter)
 	}
-	DB.QueryRow(`SELECT COUNT(*) FROM request_logs WHERE created_at >= ? AND is_error = 1 AND `+mClause, eargs...).
+	DB.QueryRow(`SELECT COUNT(*) FROM request_logs WHERE created_at >= ? AND created_at <= ? AND is_error = 1 AND `+mClause, eargs...).
 		Scan(&errorCount)
 	if stats.TotalRequests > 0 {
 		stats.ErrorRate = float64(errorCount) / float64(stats.TotalRequests) * 100
 	}
 
 	// Per-model detailed stats
-	margs := []interface{}{since}
+	margs := []interface{}{startStr, endStr}
 	if modelFilter != "" {
 		margs = append(margs, modelFilter)
 	}
@@ -94,7 +97,7 @@ func GetStats(hours int, modelFilter string) (*models.StatsResponse, error) {
 		       COALESCE(SUM(completion_tokens), 0) as comp_tok,
 		       COALESCE(SUM(input_cache_tokens), 0) as cache_tok
 		FROM request_logs
-		WHERE created_at >= ? AND `+mClause+`
+		WHERE created_at >= ? AND created_at <= ? AND `+mClause+`
 		GROUP BY model
 		ORDER BY total DESC`, margs...)
 	if mRows != nil {
@@ -114,8 +117,8 @@ func GetStats(hours int, modelFilter string) (*models.StatsResponse, error) {
 
 	// Percentiles + throughput per model
 	for i, ms := range stats.ModelStats {
-		largs := []interface{}{since, ms.Model}
-		lRows, _ := DB.Query(`SELECT latency_ms, prompt_tokens, completion_tokens FROM request_logs WHERE created_at >= ? AND model = ? AND is_error = 0`, largs...)
+		largs := []interface{}{startStr, endStr, ms.Model}
+		lRows, _ := DB.Query(`SELECT latency_ms, prompt_tokens, completion_tokens FROM request_logs WHERE created_at >= ? AND created_at <= ? AND model = ? AND is_error = 0`, largs...)
 		if lRows != nil {
 			var latencies []int64
 			totalPrompt := int64(0)
@@ -149,8 +152,8 @@ func GetStats(hours int, modelFilter string) (*models.StatsResponse, error) {
 		}
 	}
 
-	// Hourly request breakdown by model (for stacked bar)
-	hargs := []interface{}{since}
+	// Hourly request breakdown by model
+	hargs := []interface{}{startStr, endStr}
 	if modelFilter != "" {
 		hargs = append(hargs, modelFilter)
 	}
@@ -159,7 +162,7 @@ func GetStats(hours int, modelFilter string) (*models.StatsResponse, error) {
 		       model,
 		       COUNT(*) as cnt
 		FROM request_logs
-		WHERE created_at >= ? AND `+mClause+`
+		WHERE created_at >= ? AND created_at <= ? AND `+mClause+`
 		GROUP BY hour, model
 		ORDER BY hour, model
 	`, hargs...)
@@ -172,8 +175,8 @@ func GetStats(hours int, modelFilter string) (*models.StatsResponse, error) {
 		}
 	}
 
-	// Hourly token breakdown by model (for stacked bar)
-	targs := []interface{}{since}
+	// Hourly token breakdown by model
+	targs := []interface{}{startStr, endStr}
 	if modelFilter != "" {
 		targs = append(targs, modelFilter)
 	}
@@ -184,7 +187,7 @@ func GetStats(hours int, modelFilter string) (*models.StatsResponse, error) {
 		       COALESCE(SUM(completion_tokens), 0) as ct,
 		       COALESCE(SUM(input_cache_tokens), 0) as cht
 		FROM request_logs
-		WHERE created_at >= ? AND `+mClause+`
+		WHERE created_at >= ? AND created_at <= ? AND `+mClause+`
 		GROUP BY hour, model
 		ORDER BY hour, model
 	`, targs...)
@@ -197,8 +200,8 @@ func GetStats(hours int, modelFilter string) (*models.StatsResponse, error) {
 		}
 	}
 
-	// Aggregate hourly (for backward compat / simple line)
-	agArgs := []interface{}{since}
+	// Aggregate hourly
+	agArgs := []interface{}{startStr, endStr}
 	if modelFilter != "" {
 		agArgs = append(agArgs, modelFilter)
 	}
@@ -207,7 +210,7 @@ func GetStats(hours int, modelFilter string) (*models.StatsResponse, error) {
 		       COUNT(*) as cnt,
 		       SUM(CASE WHEN is_error=1 THEN 1 ELSE 0 END) as errs
 		FROM request_logs
-		WHERE created_at >= ? AND `+mClause+`
+		WHERE created_at >= ? AND created_at <= ? AND `+mClause+`
 		GROUP BY hour
 		ORDER BY hour
 	`, agArgs...)
@@ -223,8 +226,9 @@ func GetStats(hours int, modelFilter string) (*models.StatsResponse, error) {
 	return &stats, nil
 }
 
-func GetModelLogs(model string, hours int, limit int) ([]models.RequestLog, error) {
-	since := time.Now().Add(-time.Duration(hours) * time.Hour)
+func GetModelLogs(model string, start, end time.Time, limit int) ([]models.RequestLog, error) {
+	startStr := start.UTC().Format(time.RFC3339Nano)
+	endStr := end.UTC().Format(time.RFC3339Nano)
 
 	query := `SELECT id, request_id, model, request_type,
 		prompt_tokens, completion_tokens, input_cache_tokens,
@@ -232,10 +236,10 @@ func GetModelLogs(model string, hours int, limit int) ([]models.RequestLog, erro
 		COALESCE(request_summary, ''), COALESCE(response_summary, ''),
 		created_at
 		FROM request_logs
-		WHERE created_at >= ? AND model = ?
+		WHERE created_at >= ? AND created_at <= ? AND model = ?
 		ORDER BY created_at DESC LIMIT ?`
 
-	rows, err := DB.Query(query, since, model, limit)
+	rows, err := DB.Query(query, startStr, endStr, model, limit)
 	if err != nil {
 		return nil, err
 	}

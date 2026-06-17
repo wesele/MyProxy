@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -100,7 +101,42 @@ func migrate() error {
 		note TEXT DEFAULT ''
 	)`)
 
+	// Migration: convert timezone-offset timestamps to UTC
+	convertToUTC()
+
 	return nil
+}
+
+func convertToUTC() {
+	rows, err := DB.Query(`SELECT id, created_at FROM request_logs WHERE created_at NOT LIKE '%Z'`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	type fix struct {
+		id  int64
+		utc string
+	}
+	var batch []fix
+
+	for rows.Next() {
+		var id int64
+		var ts string
+		if err := rows.Scan(&id, &ts); err != nil {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339Nano, ts)
+		if err != nil {
+			continue
+		}
+		batch = append(batch, fix{id, t.UTC().Format(time.RFC3339Nano)})
+	}
+	rows.Close()
+
+	for _, f := range batch {
+		DB.Exec(`UPDATE request_logs SET created_at = ? WHERE id = ?`, f.utc, f.id)
+	}
 }
 
 func Close() {

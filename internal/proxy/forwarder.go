@@ -99,6 +99,30 @@ func ExtractResponseSummary(body []byte) string {
 	return ""
 }
 
+func findModelConfig(provider *models.Provider, requestedModel string) *models.ModelConfig {
+	for i := range provider.Models {
+		if provider.Models[i].Name == requestedModel || provider.Models[i].DisplayName == requestedModel {
+			return &provider.Models[i]
+		}
+	}
+	return nil
+}
+
+func mergeExtraBody(body []byte, extraBody map[string]interface{}) []byte {
+	if len(extraBody) == 0 {
+		return body
+	}
+	var reqMap map[string]interface{}
+	if err := json.Unmarshal(body, &reqMap); err != nil {
+		return body
+	}
+	for k, v := range extraBody {
+		reqMap[k] = v
+	}
+	merged, _ := json.Marshal(reqMap)
+	return merged
+}
+
 func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path string) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -110,11 +134,18 @@ func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path stri
 	c.Set("request_summary", ExtractRequestSummary(body))
 
 	var reqBody struct {
-		Stream bool `json:"stream"`
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
 	}
 	isStream := false
-	if err := json.Unmarshal(body, &reqBody); err == nil && reqBody.Stream {
+	json.Unmarshal(body, &reqBody)
+	if reqBody.Stream {
 		isStream = true
+	}
+
+	// Merge model-specific extra_body if present
+	if mc := findModelConfig(provider, reqBody.Model); mc != nil && mc.ExtraBody != nil {
+		body = mergeExtraBody(body, mc.ExtraBody)
 	}
 
 	targetURL := strings.TrimRight(provider.BaseURL, "/") + path
@@ -159,22 +190,32 @@ func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path stri
 	if isStream || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
 		c.Set("proxy_streaming", true)
 		c.Writer.WriteHeader(resp.StatusCode)
-		// Wrap writer to capture token usage from SSE
 		sw := &sseWriter{writer: c.Writer, buf: make([]byte, 0, 4096)}
-		if _, err := io.Copy(sw, resp.Body); err == nil {
-			pt, ct, ict := parseTokens(sw.lastUsage)
-			if pt+ct+ict == 0 {
-				// Fallback: estimate tokens from content when API doesn't provide usage info
-				pt = estimatePromptTokens(body)
-				if sw.content.Len() > 0 {
-					ct = sw.content.Len() / 4
+		flusher, canFlush := c.Writer.(http.Flusher)
+		buf := make([]byte, 4096)
+		for {
+			n, err := resp.Body.Read(buf)
+			if n > 0 {
+				sw.Write(buf[:n])
+				if canFlush {
+					flusher.Flush()
 				}
 			}
-			if pt+ct+ict > 0 {
-				c.Set("proxy_prompt_tokens", pt)
-				c.Set("proxy_completion_tokens", ct)
-				c.Set("proxy_input_cache_tokens", ict)
+			if err != nil {
+				break
 			}
+		}
+		pt, ct, ict := parseTokens(sw.lastUsage)
+		if pt+ct+ict == 0 {
+			pt = estimatePromptTokens(body)
+		}
+		if ct == 0 && sw.content.Len() > 0 {
+			ct = sw.content.Len() / 4
+		}
+		if pt+ct+ict > 0 {
+			c.Set("proxy_prompt_tokens", pt)
+			c.Set("proxy_completion_tokens", ct)
+			c.Set("proxy_input_cache_tokens", ict)
 		}
 		return
 	}
