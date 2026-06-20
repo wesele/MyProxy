@@ -2,5 +2,15 @@
 qwenportal.exe
 qwenportal_linux
 
+# Backup files
+*~
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDE/workspace files
+paseo.json
+
 # Runtime data
 data/
