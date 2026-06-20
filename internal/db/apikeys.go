@@ -75,6 +75,14 @@ func (s *SQLiteStore) UpdateApiKey(id int64, name string, isActive bool, rateLim
 	return err
 }
 
+func (s *SQLiteStore) UpdateApiKeyValue(id int64, keyValue string) error {
+	keyHash := HashKey(keyValue)
+	keyPrefix := keyValue[:12]
+	_, err := s.db.Exec(`UPDATE api_keys SET key_value=?, key_prefix=?, key_hash=? WHERE id=?`,
+		keyValue, keyPrefix, keyHash, id)
+	return err
+}
+
 func (s *SQLiteStore) DeleteApiKey(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM api_keys WHERE id = ?`, id)
 	return err

@@ -19,6 +19,7 @@ type Store interface {
 	GetApiKeyByName(name string) (*models.ApiKey, error)
 	CreateApiKey(name string, rateLimitRPM int) (*models.ApiKey, error)
 	UpdateApiKey(id int64, name string, isActive bool, rateLimitRPM int) error
+	UpdateApiKeyValue(id int64, keyValue string) error
 	DeleteApiKey(id int64) error
 	VerifyApiKey(keyValue string) (*models.ApiKey, error)
 

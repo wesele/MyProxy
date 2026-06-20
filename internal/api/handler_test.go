@@ -137,6 +137,7 @@ func (m *mockStore) CreateApiKey(name string, rateLimitRPM int) (*models.ApiKey,
 	return m.createApiKey, nil
 }
 
+func (m *mockStore) UpdateApiKeyValue(id int64, keyValue string) error { return nil }
 func (m *mockStore) UpdateApiKey(id int64, name string, isActive bool, rateLimitRPM int) error {
 	return m.updateApiKeyErr
 }

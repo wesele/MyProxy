@@ -23,9 +23,18 @@
 ### 4. 测试
 - **所有修改完成后必须测试**：
 
-### 5. 编译
+### 5. 编译与重启
 - 修改涉及 Go 后端代码 → 自动执行 `go build -o qwenportal.exe ./cmd/qwenportal` 编译。
-- 如果需要编译且编译前该程序正在运行就先退出程序，编译变成后，再重新启动。
+- 如果需要编译且编译前该程序正在运行就先退出程序，编译完成后重启。
+- 重启方式（避免阻塞当前 shell）：
+  ```powershell
+  # 先杀旧进程
+  Get-Process -Name "qwenportal" -ErrorAction SilentlyContinue | Stop-Process -Force
+  Get-Process -Name "python*" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match "app.py" } | Stop-Process -Force
+  Start-Sleep -Seconds 1
+  # 后台启动（输出重定向到文件，不会阻塞）
+  Start-Process -FilePath ".\qwenportal.exe" -WorkingDirectory "C:\Code\QwenPortal" -RedirectStandardOutput "data\server.log" -RedirectStandardError "data\server.err"
+  ```
 - 如编译失败 → 修复后重试，不得跳过
 
 ### 6. 提交

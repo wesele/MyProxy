@@ -41,6 +41,7 @@ func (m *mockStore) CreateApiKey(name string, rateLimitRPM int) (*models.ApiKey,
 func (m *mockStore) UpdateApiKey(id int64, name string, isActive bool, rateLimitRPM int) error {
 	return nil
 }
+func (m *mockStore) UpdateApiKeyValue(id int64, keyValue string) error { return nil }
 func (m *mockStore) DeleteApiKey(id int64) error { return nil }
 func (m *mockStore) VerifyApiKey(keyValue string) (*models.ApiKey, error) {
 	if m.verifyApiKeyFn != nil {

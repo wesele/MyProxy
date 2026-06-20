@@ -453,6 +453,22 @@ func TestApiKeyCRUD(t *testing.T) {
 		}
 	})
 
+	t.Run("UpdateApiKeyValue", func(t *testing.T) {
+		store := newTestStore(t)
+		key, _ := store.CreateApiKey("key-for-update-value", 0)
+		err := store.UpdateApiKeyValue(key.ID, "sk-new-value-test")
+		if err != nil {
+			t.Fatalf("UpdateApiKeyValue() error = %v", err)
+		}
+		verified, _ := store.VerifyApiKey("sk-new-value-test")
+		if verified == nil {
+			t.Fatal("expected to verify with new key value")
+		}
+		if verified.Name != "key-for-update-value" {
+			t.Errorf("Name = %s, want key-for-update-value", verified.Name)
+		}
+	})
+
 	t.Run("DeleteApiKey", func(t *testing.T) {
 		store := newTestStore(t)
 		key, _ := store.CreateApiKey("to-delete", 10)

@@ -297,6 +297,19 @@ func startFlask(cfg *config.Config, logger *zap.Logger) *exec.Cmd {
 
 func bootstrapAdminKey(logger *zap.Logger, store db.Store) {
 	keys, err := store.ListApiKeys()
+	if err == nil {
+		for _, k := range keys {
+			if k.KeyValue == "" && k.Name == "admin" {
+				if data, err := os.ReadFile("data/admin_key.txt"); err == nil {
+					val := strings.TrimSpace(string(data))
+					if val != "" {
+						store.UpdateApiKeyValue(k.ID, val)
+						logger.Info("backfilled admin key_value from admin_key.txt")
+					}
+				}
+			}
+		}
+	}
 	if err != nil || len(keys) > 0 {
 		return
 	}

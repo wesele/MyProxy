@@ -13,13 +13,12 @@
                 <th>Name</th>
                 <th>Token</th>
                 <th>Status</th>
-                <th>Rate Limit</th>
                 <th>Created</th>
                 <th>Actions</th>
             </tr>
         </thead>
         <tbody id="token-list">
-            <tr><td colspan="7" class="empty">Loading...</td></tr>
+            <tr><td colspan="6" class="empty">Loading...</td></tr>
         </tbody>
     </table>
 </div>
@@ -61,7 +60,7 @@ async function loadTokens() {
     const data = await resp.json();
     const tbody = document.getElementById('token-list');
     if (!Array.isArray(data) || data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty">No tokens yet</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">No tokens yet</td></tr>';
         return;
     }
     tbody.innerHTML = data.map(t => `
@@ -70,7 +69,6 @@ async function loadTokens() {
             <td>${t.name}</td>
             <td style="max-width:320px;overflow:hidden;text-overflow:ellipsis;"><code>${t.key_value || 'N/A'}</code></td>
             <td><span class="badge ${t.is_active ? 'badge-active' : 'badge-inactive'}">${t.is_active ? 'Active' : 'Inactive'}</span></td>
-            <td>${t.rate_limit_rpm || 'unlimited'}</td>
             <td>${t.created_at ? new Date(t.created_at).toLocaleDateString() : '-'}</td>
             <td>
                 <button class="btn btn-danger btn-sm" onclick="promptDelete(${t.id}, '${t.name}')">Delete</button>
