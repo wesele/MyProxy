@@ -28,12 +28,17 @@
 - 如果需要编译且编译前该程序正在运行就先退出程序，编译完成后重启。
 - 重启方式（避免阻塞当前 shell）：
   ```powershell
-  # 先杀旧进程
+  # 1. 杀旧进程
   Get-Process -Name "qwenportal" -ErrorAction SilentlyContinue | Stop-Process -Force
   Get-Process -Name "python*" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match "app.py" } | Stop-Process -Force
   Start-Sleep -Seconds 1
-  # 后台启动（输出重定向到文件，不会阻塞）
-  Start-Process -FilePath ".\qwenportal.exe" -WorkingDirectory "C:\Code\QwenPortal" -RedirectStandardOutput "data\server.log" -RedirectStandardError "data\server.err"
+
+  # 2. 清理旧日志文件（避免文件锁导致重定向失败）
+  Remove-Item "data\server.log" -ErrorAction SilentlyContinue
+  Remove-Item "data\server.err" -ErrorAction SilentlyContinue
+
+  # 3. 后台启动（使用 cmd /c start /b 不会阻塞 Bash 工具）
+  cmd /c start /b .\qwenportal.exe > data\server.log 2> data\server.err
   ```
 - 如编译失败 → 修复后重试，不得跳过
 
