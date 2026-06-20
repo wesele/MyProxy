@@ -223,14 +223,16 @@ func (s *SQLiteStore) GetModelLogs(model string, start, end time.Time, limit int
 	startStr := start.UTC().Format(time.RFC3339Nano)
 	endStr := end.UTC().Format(time.RFC3339Nano)
 
-	query := `SELECT id, request_id, model, request_type,
-		prompt_tokens, completion_tokens, input_cache_tokens,
-		latency_ms, status_code, is_error,
-		COALESCE(request_summary, ''), COALESCE(response_summary, ''),
-		created_at
-		FROM request_logs
-		WHERE created_at >= ? AND created_at <= ? AND model = ?
-		ORDER BY created_at DESC LIMIT ?`
+	query := `SELECT rl.id, rl.request_id, rl.model, rl.request_type,
+		rl.prompt_tokens, rl.completion_tokens, rl.input_cache_tokens,
+		rl.latency_ms, rl.status_code, rl.is_error,
+		COALESCE(rl.request_summary, ''), COALESCE(rl.response_summary, ''),
+		rl.created_at,
+		COALESCE(ak.name, '') as api_key_name
+		FROM request_logs rl
+		LEFT JOIN api_keys ak ON rl.api_key_id = ak.id
+		WHERE rl.created_at >= ? AND rl.created_at <= ? AND rl.model = ?
+		ORDER BY rl.created_at DESC LIMIT ?`
 
 	rows, err := s.db.Query(query, startStr, endStr, model, limit)
 	if err != nil {
@@ -245,7 +247,8 @@ func (s *SQLiteStore) GetModelLogs(model string, start, end time.Time, limit int
 			&l.PromptTokens, &l.CompletionTokens, &l.InputCacheTokens,
 			&l.LatencyMs, &l.StatusCode, &l.IsError,
 			&l.RequestSummary, &l.ResponseSummary,
-			&l.CreatedAt)
+			&l.CreatedAt,
+			&l.ApiKeyName)
 		logs = append(logs, l)
 	}
 	return logs, nil

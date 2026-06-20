@@ -6,6 +6,7 @@ type RequestLog struct {
 	ID               int64     `json:"id"`
 	RequestID        string    `json:"request_id"`
 	ApiKeyID         *int64    `json:"api_key_id"`
+	ApiKeyName       string    `json:"api_key_name"`
 	ProviderID       *int64    `json:"provider_id"`
 	Model            string    `json:"model"`
 	RequestType      string    `json:"request_type"`

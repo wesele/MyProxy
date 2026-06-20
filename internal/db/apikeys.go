@@ -20,7 +20,12 @@ func GenerateKeyValue() string {
 }
 
 func (s *SQLiteStore) ListApiKeys() ([]models.ApiKey, error) {
-	rows, err := s.db.Query(`SELECT id, name, key_prefix, key_value, key_hash, is_active, rate_limit_rpm, created_at FROM api_keys ORDER BY created_at DESC`)
+	rows, err := s.db.Query(`SELECT ak.id, ak.name, ak.key_prefix, ak.key_value, ak.key_hash, ak.is_active, ak.rate_limit_rpm, ak.created_at,
+		COALESCE(COUNT(rl.id), 0) as call_count
+		FROM api_keys ak
+		LEFT JOIN request_logs rl ON ak.id = rl.api_key_id
+		GROUP BY ak.id
+		ORDER BY ak.created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +34,7 @@ func (s *SQLiteStore) ListApiKeys() ([]models.ApiKey, error) {
 	var keys []models.ApiKey
 	for rows.Next() {
 		var k models.ApiKey
-		if err := rows.Scan(&k.ID, &k.Name, &k.KeyPrefix, &k.KeyValue, &k.KeyHash, &k.IsActive, &k.RateLimitRPM, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &k.KeyPrefix, &k.KeyValue, &k.KeyHash, &k.IsActive, &k.RateLimitRPM, &k.CreatedAt, &k.CallCount); err != nil {
 			return nil, err
 		}
 		keys = append(keys, k)

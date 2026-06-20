@@ -139,6 +139,7 @@
         <table class="log-table">
             <thead>
                 <tr>
+                    <th>Token</th>
                     <th>Time</th>
                     <th>Type</th>
                     <th>Status</th>
@@ -151,7 +152,7 @@
                 </tr>
             </thead>
             <tbody id="log-table-body">
-                <tr><td colspan="9" style="text-align:center;color:#999;padding:12px;">Select a model to view logs</td></tr>
+                <tr><td colspan="10" style="text-align:center;color:#999;padding:12px;">Select a model to view logs</td></tr>
             </tbody>
         </table>
     </div>
@@ -374,7 +375,7 @@ function renderModelTable(data) {
 function loadModelLogs(model) {
     document.getElementById('log-model-name').textContent = displayName(model);
     document.getElementById('log-panel').classList.add('visible');
-    document.getElementById('log-table-body').innerHTML = '<tr><td colspan="9" style="text-align:center;color:#999;padding:12px;">Loading logs...</td></tr>';
+    document.getElementById('log-table-body').innerHTML = '<tr><td colspan="10" style="text-align:center;color:#999;padding:12px;">Loading logs...</td></tr>';
 
     const hours = document.getElementById('hours-select').value;
     const startInput = document.getElementById('start-time').value;
@@ -387,7 +388,7 @@ function loadModelLogs(model) {
         .then(r => r.json())
         .then(data => {
             if (!data || data.length === 0) {
-                document.getElementById('log-table-body').innerHTML = '<tr><td colspan="9" style="text-align:center;color:#999;padding:12px;">No logs for this model</td></tr>';
+                document.getElementById('log-table-body').innerHTML = '<tr><td colspan="10" style="text-align:center;color:#999;padding:12px;">No logs for this model</td></tr>';
                 document.getElementById('log-count-label').textContent = '(0 records)';
                 return;
             }
@@ -400,6 +401,7 @@ function loadModelLogs(model) {
                 const reqSum = l.request_summary || '-';
                 const resSum = l.response_summary || '-';
                 return `<tr>
+                    <td style="font-size:11px;color:#555;white-space:nowrap;max-width:100px;overflow:hidden;text-overflow:ellipsis;" title="${(l.api_key_name || '').replace(/"/g,'&quot;')}">${l.api_key_name || '-'}</td>
                     <td style="font-size:11px;color:#888;white-space:nowrap">${time}</td>
                     <td><span style="font-size:11px;color:#666">${l.request_type || 'chat'}</span></td>
                     <td>${statusBadge} ${l.status_code}</td>
@@ -413,7 +415,7 @@ function loadModelLogs(model) {
             }).join('');
         })
         .catch(() => {
-            document.getElementById('log-table-body').innerHTML = '<tr><td colspan="9" style="text-align:center;color:#e63946;padding:12px;">Failed to load logs</td></tr>';
+            document.getElementById('log-table-body').innerHTML = '<tr><td colspan="10" style="text-align:center;color:#e63946;padding:12px;">Failed to load logs</td></tr>';
         });
 }
 

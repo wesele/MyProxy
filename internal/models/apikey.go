@@ -10,5 +10,6 @@ type ApiKey struct {
 	KeyValue     string    `json:"key_value"`
 	IsActive     bool      `json:"is_active"`
 	RateLimitRPM int       `json:"rate_limit_rpm"`
+	CallCount    int64     `json:"call_count"`
 	CreatedAt    time.Time `json:"created_at"`
 }
