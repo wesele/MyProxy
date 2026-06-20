@@ -2,8 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -17,6 +24,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/user/qwenportal/internal/api"
+	"github.com/user/qwenportal/internal/auth"
 	"github.com/user/qwenportal/internal/config"
 	"github.com/user/qwenportal/internal/db"
 	"github.com/user/qwenportal/internal/middleware"
@@ -34,64 +42,83 @@ func main() {
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
 
-	if err := db.Init(cfg.Database.Path); err != nil {
+	store, err := db.New(cfg.Database.Path)
+	if err != nil {
 		logger.Fatal("failed to init database", zap.Error(err))
 	}
-	defer db.Close()
+	defer store.Close()
 
-	bootstrapAdminKey(logger)
+	bootstrapAdminKey(logger, store)
 
-	router_ := proxy.NewRouter()
+	router_ := proxy.NewRouter(store)
 	if err := router_.Refresh(); err != nil {
 		logger.Warn("failed to refresh router", zap.Error(err))
 	}
 
 	forwarder := proxy.NewForwarder(logger)
 
-	openAIHandler := api.NewOpenAIHandler(forwarder, router_, logger)
+	openAIHandler := api.NewOpenAIHandler(forwarder, router_, logger, store)
 	geminiHandler := api.NewGeminiHandler(forwarder, router_, logger)
 	openAIHandler.SetGeminiHandler(geminiHandler)
+	responsesHandler := api.NewResponsesHandler(forwarder, router_, logger, store)
+	responsesHandler.SetGeminiHandler(geminiHandler)
 	claudeHandler := api.NewClaudeHandler(forwarder, router_, logger)
-	adminHandler := api.NewAdminHandler(logger, router_)
+	adminHandler := api.NewAdminHandler(logger, router_, store)
+
+	authManager := auth.NewAuthManager("data/password.txt")
+	loginHandler := api.NewLoginHandler(authManager, logger)
+
+	if cfg.Server.IsTLSEnabled() {
+		ensureCert(cfg.Server.CertFile, cfg.Server.KeyFile, logger)
+	}
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.CORS())
-	r.Use(middleware.RequestLogger(logger))
+	r.Use(middleware.RequestLogger(logger, store))
 
 	r.GET("/", func(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/admin/dashboard")
 	})
-	r.GET("/v1/models", openAIHandler.ListModels)
-	r.POST("/v1/chat/completions", openAIHandler.ChatCompletions)
-	r.POST("/v1/embeddings", openAIHandler.Embeddings)
-	r.POST("/v1/messages", claudeHandler.Messages)
 
-	admin := r.Group("/admin/api", middleware.AdminAuth())
+	apiAuth := middleware.AuthMiddleware(store)
+	r.GET("/v1/models", apiAuth, openAIHandler.ListModels)
+	r.POST("/v1/chat/completions", apiAuth, openAIHandler.ChatCompletions)
+	r.POST("/v1/embeddings", apiAuth, openAIHandler.Embeddings)
+	r.POST("/v1/responses", apiAuth, responsesHandler.Responses)
+	r.POST("/v1/messages", apiAuth, claudeHandler.Messages)
+
+	loginRequired := middleware.LoginRequired(authManager)
+
+	r.POST("/admin/api/login", loginHandler.Login)
+	r.POST("/admin/api/logout", loginHandler.Logout)
+	r.GET("/admin/api/session", loginHandler.CheckSession)
+
+	adminAPI := r.Group("/admin/api", loginRequired, middleware.AdminAuth(store))
 	{
-		admin.GET("/providers", adminHandler.ListProviders)
-		admin.POST("/providers", adminHandler.CreateProvider)
-		admin.GET("/providers/:id", adminHandler.GetProvider)
-		admin.PUT("/providers/:id", adminHandler.UpdateProvider)
-		admin.DELETE("/providers/:id", adminHandler.DeleteProvider)
-		admin.GET("/providers/export", adminHandler.ExportProviders)
-		admin.POST("/providers/import", adminHandler.ImportProviders)
+		adminAPI.GET("/providers", adminHandler.ListProviders)
+		adminAPI.POST("/providers", adminHandler.CreateProvider)
+		adminAPI.GET("/providers/:id", adminHandler.GetProvider)
+		adminAPI.PUT("/providers/:id", adminHandler.UpdateProvider)
+		adminAPI.DELETE("/providers/:id", adminHandler.DeleteProvider)
+		adminAPI.GET("/providers/export", adminHandler.ExportProviders)
+		adminAPI.POST("/providers/import", adminHandler.ImportProviders)
 
-		admin.GET("/keys", adminHandler.ListApiKeys)
-		admin.POST("/keys", adminHandler.CreateApiKey)
-		admin.PUT("/keys/:id", adminHandler.UpdateApiKey)
-		admin.DELETE("/keys/:id", adminHandler.DeleteApiKey)
+		adminAPI.GET("/keys", adminHandler.ListApiKeys)
+		adminAPI.POST("/keys", adminHandler.CreateApiKey)
+		adminAPI.PUT("/keys/:id", adminHandler.UpdateApiKey)
+		adminAPI.DELETE("/keys/:id", adminHandler.DeleteApiKey)
 
-		admin.GET("/stats", adminHandler.GetStats)
-		admin.GET("/logs", adminHandler.GetModelLogs)
-		admin.POST("/providers/fetch-models", adminHandler.FetchProviderModels)
-		admin.POST("/providers/test", adminHandler.TestProvider)
-		admin.POST("/models/test", adminHandler.TestModels)
-		admin.POST("/training/start", adminHandler.TrainingStart)
-		admin.POST("/training/stop", adminHandler.TrainingStop)
-		admin.GET("/training/stats", adminHandler.TrainingStats)
-		admin.GET("/training/active", adminHandler.TrainingActive)
+		adminAPI.GET("/stats", adminHandler.GetStats)
+		adminAPI.GET("/logs", adminHandler.GetModelLogs)
+		adminAPI.POST("/providers/fetch-models", adminHandler.FetchProviderModels)
+		adminAPI.POST("/providers/test", adminHandler.TestProvider)
+		adminAPI.POST("/models/test", adminHandler.TestModels)
+		adminAPI.POST("/training/start", adminHandler.TrainingStart)
+		adminAPI.POST("/training/stop", adminHandler.TrainingStop)
+		adminAPI.GET("/training/stats", adminHandler.TrainingStats)
+		adminAPI.GET("/training/active", adminHandler.TrainingActive)
 	}
 
 	var flaskCmd *exec.Cmd
@@ -100,7 +127,15 @@ func main() {
 	}
 
 	r.NoRoute(func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/admin") {
+		p := c.Request.URL.Path
+		if strings.HasPrefix(p, "/admin") {
+			if p != "/admin/login" && !strings.HasPrefix(p, "/admin/static/") {
+				sid, err := c.Cookie("session")
+				if err != nil || sid == "" || !authManager.ValidateSession(sid) {
+					c.Redirect(http.StatusFound, "/admin/login")
+					return
+				}
+			}
 			proxyToFlask(c, cfg.WebUI.Port)
 			return
 		}
@@ -113,12 +148,19 @@ func main() {
 		Handler: r,
 	}
 
-	printStartupBanner(addr, cfg.WebUI.Port)
+	printStartupBanner(addr, cfg.WebUI.Port, cfg.Server.IsTLSEnabled())
 
 	go func() {
-		logger.Info("server starting", zap.String("addr", addr))
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatal("server error", zap.Error(err))
+		if cfg.Server.IsTLSEnabled() {
+			logger.Info("server starting with TLS", zap.String("addr", addr))
+			if err := srv.ListenAndServeTLS(cfg.Server.CertFile, cfg.Server.KeyFile); err != nil && err != http.ErrServerClosed {
+				logger.Fatal("server error", zap.Error(err))
+			}
+		} else {
+			logger.Info("server starting", zap.String("addr", addr))
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logger.Fatal("server error", zap.Error(err))
+			}
 		}
 	}()
 
@@ -150,6 +192,68 @@ func killProcess(cmd *exec.Cmd) {
 	cmd.Wait()
 }
 
+func ensureCert(certPath, keyPath string, logger *zap.Logger) {
+	if _, err := os.Stat(certPath); err == nil {
+		if _, err := os.Stat(keyPath); err == nil {
+			return
+		}
+	}
+
+	logger.Info("generating self-signed TLS certificate",
+		zap.String("cert", certPath),
+		zap.String("key", keyPath),
+	)
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		logger.Fatal("failed to generate private key", zap.Error(err))
+	}
+
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		logger.Fatal("failed to generate serial number", zap.Error(err))
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			CommonName: "QwenPortal",
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+		DNSNames:              []string{"localhost"},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &priv.PublicKey, priv)
+	if err != nil {
+		logger.Fatal("failed to create certificate", zap.Error(err))
+	}
+
+	os.MkdirAll(filepath.Dir(certPath), 0755)
+	certOut, err := os.Create(certPath)
+	if err != nil {
+		logger.Fatal("failed to write certificate", zap.Error(err))
+	}
+	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	certOut.Close()
+
+	os.MkdirAll(filepath.Dir(keyPath), 0755)
+	keyOut, err := os.Create(keyPath)
+	if err != nil {
+		logger.Fatal("failed to write private key", zap.Error(err))
+	}
+	b, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		logger.Fatal("failed to marshal private key", zap.Error(err))
+	}
+	pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: b})
+	keyOut.Close()
+}
+
 func startFlask(cfg *config.Config, logger *zap.Logger) *exec.Cmd {
 	webUIPort := cfg.WebUI.Port
 	if webUIPort == 0 {
@@ -158,11 +262,19 @@ func startFlask(cfg *config.Config, logger *zap.Logger) *exec.Cmd {
 
 	webUIDir := findWebUIDir()
 
+	scheme := "http"
+	if cfg.Server.IsTLSEnabled() {
+		scheme = "https"
+	}
+	apiBase := fmt.Sprintf("%s://127.0.0.1:%d/admin/api", scheme, cfg.Server.Port)
+
 	cmd := exec.Command(cfg.WebUI.Python, "app.py")
 	cmd.Dir = webUIDir
 	cmd.Env = append(os.Environ(),
 		"FLASK_PORT="+strconv.Itoa(webUIPort),
 		"FLASK_DEBUG=0",
+		"API_BASE="+apiBase,
+		"GO_PORT="+strconv.Itoa(cfg.Server.Port),
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -181,13 +293,13 @@ func startFlask(cfg *config.Config, logger *zap.Logger) *exec.Cmd {
 	return cmd
 }
 
-func bootstrapAdminKey(logger *zap.Logger) {
-	keys, err := db.ListApiKeys()
+func bootstrapAdminKey(logger *zap.Logger, store db.Store) {
+	keys, err := store.ListApiKeys()
 	if err != nil || len(keys) > 0 {
 		return
 	}
 
-	key, err := db.CreateApiKey("admin", 0)
+	key, err := store.CreateApiKey("admin", 0)
 	if err != nil {
 		logger.Warn("failed to create admin key", zap.Error(err))
 		return
@@ -226,8 +338,12 @@ func findAvailablePort() int {
 	return 5100
 }
 
-func printStartupBanner(addr string, webUIPort int) {
+func printStartupBanner(addr string, webUIPort int, tlsEnabled bool) {
 	displayAddr := strings.Replace(addr, "0.0.0.0", "localhost", 1)
+	scheme := "http"
+	if tlsEnabled {
+		scheme = "https"
+	}
 	const sep = "═══════════════════════════════════════════════"
 	const reset = "\033[0m"
 	const bold = "\033[1m"
@@ -245,26 +361,28 @@ func printStartupBanner(addr string, webUIPort int) {
 	fmt.Fprintln(os.Stderr, c("  "+b("QwenPortal")+"  --  LLM API Gateway"))
 	fmt.Fprintln(os.Stderr, c(sep))
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "  "+b("All services on one port:")+"  "+g("http://"+displayAddr))
+	fmt.Fprintln(os.Stderr, "  "+b("All services on one port:")+"  "+g(scheme+"://"+displayAddr))
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  "+b("Web UI:"))
-	fmt.Fprintf(os.Stderr, "    %-36s %s\n", g("http://"+displayAddr+"/"), "Dashboard, providers, API keys, stats")
+	fmt.Fprintf(os.Stderr, "    %-36s %s\n", g(scheme+"://"+displayAddr+"/"), "Dashboard, providers, API keys, stats")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  "+b("API:"))
 	fmt.Fprintf(os.Stderr, "    %-36s %s\n", c("/v1/chat/completions"), "OpenAI-compatible chat completion")
+	fmt.Fprintf(os.Stderr, "    %-36s %s\n", c("/v1/responses"), "OpenAI Responses API")
 	fmt.Fprintf(os.Stderr, "    %-36s %s\n", c("/v1/embeddings"), "OpenAI-compatible embeddings")
 	fmt.Fprintf(os.Stderr, "    %-36s %s\n", c("/v1/models"), "List available models")
 	fmt.Fprintf(os.Stderr, "    %-36s %s\n", c("/v1/messages"), "Claude-compatible messages")
 	fmt.Fprintf(os.Stderr, "    %-36s %s\n", c("/v1/chat/completions (Gemini)"), "Gemini via OpenAI format")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  "+b("Usage examples:"))
-	fmt.Fprintf(os.Stderr, "    curl -X POST http://%s/v1/chat/completions \\\n", displayAddr)
+	fmt.Fprintf(os.Stderr, "    curl -X POST %s://%s/v1/chat/completions \\\n", scheme, displayAddr)
 	fmt.Fprintln(os.Stderr, `      -d '{"model":"<model>","messages":[{"role":"user","content":"hello"}]}'`)
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintf(os.Stderr, "    from openai import OpenAI\n")
-	fmt.Fprintf(os.Stderr, "    client = OpenAI(base_url=%q)\n", "http://"+displayAddr+"/v1")
+	fmt.Fprintf(os.Stderr, "    client = OpenAI(base_url=%q)\n", scheme+"://"+displayAddr+"/v1")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  "+b("Admin key saved to:")+"  "+y("data/admin_key.txt"))
+	fmt.Fprintln(os.Stderr, "  "+b("Admin password saved to:")+"  "+y("data/password.txt"))
 	fmt.Fprintln(os.Stderr, c(sep))
 	fmt.Fprintln(os.Stderr, "")
 }
