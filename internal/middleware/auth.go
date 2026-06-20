@@ -9,7 +9,7 @@ import (
 	"github.com/user/qwenportal/internal/models"
 )
 
-func AuthMiddleware() gin.HandlerFunc {
+func AuthMiddleware(store db.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		keyValue := extractBearerToken(c)
 		if keyValue == "" {
@@ -17,7 +17,7 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		apiKey, err := db.VerifyApiKey(keyValue)
+		apiKey, err := store.VerifyApiKey(keyValue)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid api key"})
 			return
@@ -28,10 +28,10 @@ func AuthMiddleware() gin.HandlerFunc {
 	}
 }
 
-func AdminAuth() gin.HandlerFunc {
+func AdminAuth(store db.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if keyValue := extractBearerToken(c); keyValue != "" {
-			apiKey, err := db.VerifyApiKey(keyValue)
+			apiKey, err := store.VerifyApiKey(keyValue)
 			if err == nil {
 				c.Set("api_key", apiKey)
 				c.Next()

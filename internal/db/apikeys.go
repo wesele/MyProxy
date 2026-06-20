@@ -20,7 +20,7 @@ func GenerateKeyValue() string {
 }
 
 func (s *SQLiteStore) ListApiKeys() ([]models.ApiKey, error) {
-	rows, err := s.db.Query(`SELECT id, name, key_prefix, key_hash, is_active, rate_limit_rpm, created_at FROM api_keys ORDER BY created_at DESC`)
+	rows, err := s.db.Query(`SELECT id, name, key_prefix, key_value, key_hash, is_active, rate_limit_rpm, created_at FROM api_keys ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +29,7 @@ func (s *SQLiteStore) ListApiKeys() ([]models.ApiKey, error) {
 	var keys []models.ApiKey
 	for rows.Next() {
 		var k models.ApiKey
-		if err := rows.Scan(&k.ID, &k.Name, &k.KeyPrefix, &k.KeyHash, &k.IsActive, &k.RateLimitRPM, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &k.KeyPrefix, &k.KeyValue, &k.KeyHash, &k.IsActive, &k.RateLimitRPM, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		keys = append(keys, k)
@@ -39,8 +39,8 @@ func (s *SQLiteStore) ListApiKeys() ([]models.ApiKey, error) {
 
 func (s *SQLiteStore) GetApiKeyByName(name string) (*models.ApiKey, error) {
 	var k models.ApiKey
-	err := s.db.QueryRow(`SELECT id, name, key_prefix, key_hash, is_active, rate_limit_rpm, created_at FROM api_keys WHERE name = ?`, name).
-		Scan(&k.ID, &k.Name, &k.KeyPrefix, &k.KeyHash, &k.IsActive, &k.RateLimitRPM, &k.CreatedAt)
+	err := s.db.QueryRow(`SELECT id, name, key_prefix, key_value, key_hash, is_active, rate_limit_rpm, created_at FROM api_keys WHERE name = ?`, name).
+		Scan(&k.ID, &k.Name, &k.KeyPrefix, &k.KeyValue, &k.KeyHash, &k.IsActive, &k.RateLimitRPM, &k.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("api key not found: %s", name)
 	}
@@ -52,8 +52,8 @@ func (s *SQLiteStore) CreateApiKey(name string, rateLimitRPM int) (*models.ApiKe
 	keyHash := HashKey(keyValue)
 	keyPrefix := keyValue[:12]
 
-	result, err := s.db.Exec(`INSERT INTO api_keys (name, key_prefix, key_hash, is_active, rate_limit_rpm, created_at) VALUES (?, ?, ?, 1, ?, ?)`,
-		name, keyPrefix, keyHash, rateLimitRPM, time.Now())
+	result, err := s.db.Exec(`INSERT INTO api_keys (name, key_prefix, key_value, key_hash, is_active, rate_limit_rpm, created_at) VALUES (?, ?, ?, ?, 1, ?, ?)`,
+		name, keyPrefix, keyValue, keyHash, rateLimitRPM, time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -84,8 +84,8 @@ func (s *SQLiteStore) VerifyApiKey(keyValue string) (*models.ApiKey, error) {
 	keyHash := HashKey(keyValue)
 
 	var k models.ApiKey
-	err := s.db.QueryRow(`SELECT id, name, key_prefix, key_hash, is_active, rate_limit_rpm, created_at FROM api_keys WHERE key_hash = ? AND is_active = 1`, keyHash).
-		Scan(&k.ID, &k.Name, &k.KeyPrefix, &k.KeyHash, &k.IsActive, &k.RateLimitRPM, &k.CreatedAt)
+	err := s.db.QueryRow(`SELECT id, name, key_prefix, key_value, key_hash, is_active, rate_limit_rpm, created_at FROM api_keys WHERE key_hash = ? AND is_active = 1`, keyHash).
+		Scan(&k.ID, &k.Name, &k.KeyPrefix, &k.KeyValue, &k.KeyHash, &k.IsActive, &k.RateLimitRPM, &k.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("invalid api key")
 	}

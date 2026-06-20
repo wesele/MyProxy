@@ -57,9 +57,10 @@ func (h *ClaudeHandler) Messages(c *gin.Context) {
 	}
 
 	// Resolve display name to upstream model name
-	upstreamModel := model
+	modelName := strings.TrimPrefix(model, provider.Name+".")
+	upstreamModel := modelName
 	for _, m := range provider.Models {
-		if m.DisplayName == model && m.Name != model {
+		if m.DisplayName == modelName && m.Name != modelName {
 			upstreamModel = m.Name
 			break
 		}

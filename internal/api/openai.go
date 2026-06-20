@@ -19,10 +19,11 @@ type OpenAIHandler struct {
 	router        *proxy.Router
 	logger        *zap.Logger
 	geminiHandler *GeminiHandler
+	store         db.Store
 }
 
-func NewOpenAIHandler(f *proxy.Forwarder, r *proxy.Router, l *zap.Logger) *OpenAIHandler {
-	return &OpenAIHandler{forwarder: f, router: r, logger: l}
+func NewOpenAIHandler(f *proxy.Forwarder, r *proxy.Router, l *zap.Logger, s db.Store) *OpenAIHandler {
+	return &OpenAIHandler{forwarder: f, router: r, logger: l, store: s}
 }
 
 func (h *OpenAIHandler) SetGeminiHandler(gh *GeminiHandler) {
@@ -30,7 +31,7 @@ func (h *OpenAIHandler) SetGeminiHandler(gh *GeminiHandler) {
 }
 
 func (h *OpenAIHandler) ListModels(c *gin.Context) {
-	providers, err := db.ListProviders()
+	providers, err := h.store.ListProviders()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list providers"})
 		return
@@ -53,7 +54,7 @@ func (h *OpenAIHandler) ListModels(c *gin.Context) {
 	for _, p := range providers {
 		for _, m := range p.Models {
 			model := Model{
-				ID:      m.DisplayName,
+				ID:      p.Name + "." + m.DisplayName,
 				Object:  "model",
 				Created: 1700000000,
 				OwnedBy: p.Name,
@@ -113,10 +114,10 @@ func (h *OpenAIHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	// Resolve display name to upstream model name
-	upstreamModel := reqBody.Model
+	modelName := strings.TrimPrefix(reqBody.Model, provider.Name+".")
+	upstreamModel := modelName
 	for _, m := range provider.Models {
-		if m.DisplayName == reqBody.Model && m.Name != reqBody.Model {
+		if m.DisplayName == modelName && m.Name != modelName {
 			upstreamModel = m.Name
 			break
 		}
@@ -127,7 +128,6 @@ func (h *OpenAIHandler) ChatCompletions(c *gin.Context) {
 		entry.(*middleware.LogEntry).Model = reqBody.Model
 	}
 
-	// Replace model in body with upstream name if different
 	var finalBody []byte
 	if upstreamModel != reqBody.Model {
 		var bodyMap map[string]interface{}

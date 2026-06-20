@@ -11,7 +11,7 @@
             <tr>
                 <th>ID</th>
                 <th>Name</th>
-                <th>Key Prefix</th>
+                <th>Token</th>
                 <th>Status</th>
                 <th>Rate Limit</th>
                 <th>Created</th>
@@ -38,7 +38,7 @@
     <button class="btn" onclick="hideAddForm()" style="margin-left:8px;">Cancel</button>
     <div id="token-result" style="margin-top:12px;display:none;">
         <div class="flash flash-success">
-            <strong>Token created!</strong> Save this key - it will not be shown again:
+            <strong>Token created!</strong>
             <div style="margin-top:8px;padding:8px;background:#f0f0f0;border-radius:4px;font-family:monospace;font-size:14px;word-break:break-all;" id="token-value"></div>
         </div>
     </div>
@@ -68,7 +68,7 @@ async function loadTokens() {
         <tr>
             <td>${t.id}</td>
             <td>${t.name}</td>
-            <td><code>${t.key_prefix}...</code></td>
+            <td style="max-width:320px;overflow:hidden;text-overflow:ellipsis;"><code>${t.key_value}</code></td>
             <td><span class="badge ${t.is_active ? 'badge-active' : 'badge-inactive'}">${t.is_active ? 'Active' : 'Inactive'}</span></td>
             <td>${t.rate_limit_rpm || 'unlimited'}</td>
             <td>${t.created_at ? new Date(t.created_at).toLocaleDateString() : '-'}</td>

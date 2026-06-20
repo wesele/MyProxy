@@ -18,7 +18,7 @@ type LogEntry struct {
 	RequestType string
 }
 
-func RequestLogger(logger *zap.Logger) gin.HandlerFunc {
+func RequestLogger(logger *zap.Logger, store db.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		entry := &LogEntry{
 			RequestID:   uuid.New().String(),
@@ -32,6 +32,8 @@ func RequestLogger(logger *zap.Logger) gin.HandlerFunc {
 			entry.RequestType = "embedding"
 		case strings.Contains(path, "/messages"):
 			entry.RequestType = "message"
+		case strings.Contains(path, "/responses"):
+			entry.RequestType = "responses"
 		}
 
 		c.Set("log_entry", entry)
@@ -110,7 +112,7 @@ func RequestLogger(logger *zap.Logger) gin.HandlerFunc {
 				}
 			}
 
-			db.InsertRequestLog(reqLog)
+			store.InsertRequestLog(reqLog)
 		}()
 	}
 }

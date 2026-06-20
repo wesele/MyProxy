@@ -10,30 +10,43 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var DB *sql.DB
-
-func Init(path string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("create db dir: %w", err)
-	}
-
-	var err error
-	DB, err = sql.Open("sqlite", path+"?_journal_mode=WAL&_busy_timeout=5000")
-	if err != nil {
-		return fmt.Errorf("open db: %w", err)
-	}
-
-	DB.SetMaxOpenConns(1)
-
-	if err := migrate(); err != nil {
-		return fmt.Errorf("migrate: %w", err)
-	}
-
-	return nil
+type SQLiteStore struct {
+	db *sql.DB
 }
 
-func migrate() error {
+func New(path string) (*SQLiteStore, error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("create db dir: %w", err)
+	}
+
+	conn, err := sql.Open("sqlite", path+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+
+	conn.SetMaxOpenConns(1)
+
+	store := &SQLiteStore{db: conn}
+	if err := store.migrate(); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+
+	return store, nil
+}
+
+func (s *SQLiteStore) DB() *sql.DB {
+	return s.db
+}
+
+func (s *SQLiteStore) Close() {
+	if s.db != nil {
+		s.db.Close()
+	}
+}
+
+func (s *SQLiteStore) migrate() error {
 	schemas := []string{
 		`CREATE TABLE IF NOT EXISTS providers (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,24 +88,25 @@ func migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_model ON request_logs(model)`,
 	}
 
-	for _, s := range schemas {
-		if _, err := DB.Exec(s); err != nil {
+	for _, schema := range schemas {
+		if _, err := s.db.Exec(schema); err != nil {
 			return err
 		}
 	}
 
-	// Migration: add columns for extended stats
 	alterStmts := []string{
 		`ALTER TABLE request_logs ADD COLUMN input_cache_tokens INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE request_logs ADD COLUMN request_summary TEXT DEFAULT ''`,
 		`ALTER TABLE request_logs ADD COLUMN response_summary TEXT DEFAULT ''`,
 	}
-	for _, s := range alterStmts {
-		DB.Exec(s)
+	for _, stmt := range alterStmts {
+		s.db.Exec(stmt)
 	}
 
-	// Training records for Tools (epoch seconds to avoid datetime format issues)
-	DB.Exec(`CREATE TABLE IF NOT EXISTS training_records (
+	s.db.Exec(`ALTER TABLE api_keys ADD COLUMN key_value TEXT DEFAULT ''`)
+	s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_name ON api_keys(name)`)
+
+	s.db.Exec(`CREATE TABLE IF NOT EXISTS training_records (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		tool TEXT NOT NULL DEFAULT 'pelvic_floor',
 		started_at INTEGER NOT NULL,
@@ -101,14 +115,13 @@ func migrate() error {
 		note TEXT DEFAULT ''
 	)`)
 
-	// Migration: convert timezone-offset timestamps to UTC
-	convertToUTC()
+	s.convertToUTC()
 
 	return nil
 }
 
-func convertToUTC() {
-	rows, err := DB.Query(`SELECT id, created_at FROM request_logs WHERE created_at NOT LIKE '%Z'`)
+func (s *SQLiteStore) convertToUTC() {
+	rows, err := s.db.Query(`SELECT id, created_at FROM request_logs WHERE created_at NOT LIKE '%Z'`)
 	if err != nil {
 		return
 	}
@@ -135,12 +148,6 @@ func convertToUTC() {
 	rows.Close()
 
 	for _, f := range batch {
-		DB.Exec(`UPDATE request_logs SET created_at = ? WHERE id = ?`, f.utc, f.id)
-	}
-}
-
-func Close() {
-	if DB != nil {
-		DB.Close()
+		s.db.Exec(`UPDATE request_logs SET created_at = ? WHERE id = ?`, f.utc, f.id)
 	}
 }

@@ -28,7 +28,7 @@ func unmarshalModels(jsonStr string) []models.ModelConfig {
 	configs = make([]models.ModelConfig, 0, len(names))
 	for _, name := range names {
 		configs = append(configs, models.ModelConfig{
-			Name: name,
+			Name:        name,
 			DisplayName: name,
 		})
 	}
@@ -47,8 +47,8 @@ func scanProvider(row interface{ Scan(dest ...interface{}) error }, p *models.Pr
 	return row.Scan(&p.ID, &p.Name, &p.ProviderType, &p.BaseURL, &p.APIKey, &p.ModelsJSON, &p.Priority, &p.CreatedAt, &p.UpdatedAt)
 }
 
-func ListProviders() ([]models.Provider, error) {
-	rows, err := DB.Query(`SELECT ` + providerCols + ` FROM providers ORDER BY priority, name`)
+func (s *SQLiteStore) ListProviders() ([]models.Provider, error) {
+	rows, err := s.db.Query(`SELECT ` + providerCols + ` FROM providers ORDER BY priority, name`)
 	if err != nil {
 		return nil, err
 	}
@@ -66,9 +66,9 @@ func ListProviders() ([]models.Provider, error) {
 	return providers, nil
 }
 
-func GetProvider(id int64) (*models.Provider, error) {
+func (s *SQLiteStore) GetProvider(id int64) (*models.Provider, error) {
 	var p models.Provider
-	err := scanProvider(DB.QueryRow(`SELECT `+providerCols+` FROM providers WHERE id = ?`, id), &p)
+	err := scanProvider(s.db.QueryRow(`SELECT `+providerCols+` FROM providers WHERE id = ?`, id), &p)
 	if err != nil {
 		return nil, err
 	}
@@ -76,9 +76,9 @@ func GetProvider(id int64) (*models.Provider, error) {
 	return &p, nil
 }
 
-func CreateProvider(p *models.Provider) (int64, error) {
+func (s *SQLiteStore) CreateProvider(p *models.Provider) (int64, error) {
 	modelsJSON := marshalModels(p.Models)
-	result, err := DB.Exec(`INSERT INTO providers (name, provider_type, base_url, api_key, models_json, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+	result, err := s.db.Exec(`INSERT INTO providers (name, provider_type, base_url, api_key, models_json, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, p.ProviderType, p.BaseURL, p.APIKey, modelsJSON, p.Priority, time.Now(), time.Now())
 	if err != nil {
 		return 0, err
@@ -86,21 +86,21 @@ func CreateProvider(p *models.Provider) (int64, error) {
 	return result.LastInsertId()
 }
 
-func UpdateProvider(p *models.Provider) error {
+func (s *SQLiteStore) UpdateProvider(p *models.Provider) error {
 	modelsJSON := marshalModels(p.Models)
-	_, err := DB.Exec(`UPDATE providers SET name=?, provider_type=?, base_url=?, api_key=?, models_json=?, priority=?, updated_at=? WHERE id=?`,
+	_, err := s.db.Exec(`UPDATE providers SET name=?, provider_type=?, base_url=?, api_key=?, models_json=?, priority=?, updated_at=? WHERE id=?`,
 		p.Name, p.ProviderType, p.BaseURL, p.APIKey, modelsJSON, p.Priority, time.Now(), p.ID)
 	return err
 }
 
-func DeleteProvider(id int64) error {
-	_, err := DB.Exec(`DELETE FROM providers WHERE id = ?`, id)
+func (s *SQLiteStore) DeleteProvider(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM providers WHERE id = ?`, id)
 	return err
 }
 
-func FindProviderByName(name string) (*models.Provider, error) {
+func (s *SQLiteStore) FindProviderByName(name string) (*models.Provider, error) {
 	var p models.Provider
-	err := scanProvider(DB.QueryRow(`SELECT `+providerCols+` FROM providers WHERE name = ?`, name), &p)
+	err := scanProvider(s.db.QueryRow(`SELECT `+providerCols+` FROM providers WHERE name = ?`, name), &p)
 	if err != nil {
 		return nil, err
 	}
@@ -108,8 +108,8 @@ func FindProviderByName(name string) (*models.Provider, error) {
 	return &p, nil
 }
 
-func GetProviderByModel(model string) (*models.Provider, error) {
-	providers, err := ListProviders()
+func (s *SQLiteStore) GetProviderByModel(model string) (*models.Provider, error) {
+	providers, err := s.ListProviders()
 	if err != nil {
 		return nil, err
 	}

@@ -8,8 +8,8 @@ import (
 	"github.com/user/qwenportal/internal/models"
 )
 
-func InsertRequestLog(log *models.RequestLog) error {
-	_, err := DB.Exec(`INSERT INTO request_logs
+func (s *SQLiteStore) InsertRequestLog(log *models.RequestLog) error {
+	_, err := s.db.Exec(`INSERT INTO request_logs
 		(request_id, api_key_id, provider_id, model, request_type,
 		 prompt_tokens, completion_tokens, input_cache_tokens,
 		 latency_ms, status_code, is_error,
@@ -47,22 +47,20 @@ func modelClause(model string) string {
 	return "model = ?"
 }
 
-func GetStats(start, end time.Time, modelFilter string) (*models.StatsResponse, error) {
+func (s *SQLiteStore) GetStats(start, end time.Time, modelFilter string) (*models.StatsResponse, error) {
 	mClause := modelClause(modelFilter)
 
-	// Format timestamps to UTC for consistent string comparison
 	startStr := start.UTC().Format(time.RFC3339Nano)
 	endStr := end.UTC().Format(time.RFC3339Nano)
 
 	var stats models.StatsResponse
 	stats.ModelBreakdown = make(map[string]int64)
 
-	// Aggregate
 	args := []interface{}{startStr, endStr}
 	if modelFilter != "" {
 		args = append(args, modelFilter)
 	}
-	err := DB.QueryRow(`SELECT
+	err := s.db.QueryRow(`SELECT
 		COUNT(*),
 		COALESCE(AVG(CASE WHEN is_error=0 THEN latency_ms END), 0),
 		COALESCE(SUM(prompt_tokens+completion_tokens), 0)
@@ -77,18 +75,17 @@ func GetStats(start, end time.Time, modelFilter string) (*models.StatsResponse, 
 	if modelFilter != "" {
 		eargs = append(eargs, modelFilter)
 	}
-	DB.QueryRow(`SELECT COUNT(*) FROM request_logs WHERE created_at >= ? AND created_at <= ? AND is_error = 1 AND `+mClause, eargs...).
+	s.db.QueryRow(`SELECT COUNT(*) FROM request_logs WHERE created_at >= ? AND created_at <= ? AND is_error = 1 AND `+mClause, eargs...).
 		Scan(&errorCount)
 	if stats.TotalRequests > 0 {
 		stats.ErrorRate = float64(errorCount) / float64(stats.TotalRequests) * 100
 	}
 
-	// Per-model detailed stats
 	margs := []interface{}{startStr, endStr}
 	if modelFilter != "" {
 		margs = append(margs, modelFilter)
 	}
-	mRows, _ := DB.Query(`
+	mRows, _ := s.db.Query(`
 		SELECT model,
 		       COUNT(*) as total,
 		       SUM(CASE WHEN is_error=1 THEN 1 ELSE 0 END) as errors,
@@ -115,10 +112,9 @@ func GetStats(start, end time.Time, modelFilter string) (*models.StatsResponse, 
 		}
 	}
 
-	// Percentiles + throughput per model
 	for i, ms := range stats.ModelStats {
 		largs := []interface{}{startStr, endStr, ms.Model}
-		lRows, _ := DB.Query(`SELECT latency_ms, prompt_tokens, completion_tokens FROM request_logs WHERE created_at >= ? AND created_at <= ? AND model = ? AND is_error = 0`, largs...)
+		lRows, _ := s.db.Query(`SELECT latency_ms, prompt_tokens, completion_tokens FROM request_logs WHERE created_at >= ? AND created_at <= ? AND model = ? AND is_error = 0`, largs...)
 		if lRows != nil {
 			var latencies []int64
 			totalPrompt := int64(0)
@@ -152,12 +148,11 @@ func GetStats(start, end time.Time, modelFilter string) (*models.StatsResponse, 
 		}
 	}
 
-	// Hourly request breakdown by model
 	hargs := []interface{}{startStr, endStr}
 	if modelFilter != "" {
 		hargs = append(hargs, modelFilter)
 	}
-	hRows, _ := DB.Query(`
+	hRows, _ := s.db.Query(`
 		SELECT strftime('%Y-%m-%d %H:00', substr(created_at, 1, 19)) as hour,
 		       model,
 		       COUNT(*) as cnt
@@ -175,12 +170,11 @@ func GetStats(start, end time.Time, modelFilter string) (*models.StatsResponse, 
 		}
 	}
 
-	// Hourly token breakdown by model
 	targs := []interface{}{startStr, endStr}
 	if modelFilter != "" {
 		targs = append(targs, modelFilter)
 	}
-	tRows, _ := DB.Query(`
+	tRows, _ := s.db.Query(`
 		SELECT strftime('%Y-%m-%d %H:00', substr(created_at, 1, 19)) as hour,
 		       model,
 		       COALESCE(SUM(prompt_tokens), 0) as pt,
@@ -200,12 +194,11 @@ func GetStats(start, end time.Time, modelFilter string) (*models.StatsResponse, 
 		}
 	}
 
-	// Aggregate hourly
 	agArgs := []interface{}{startStr, endStr}
 	if modelFilter != "" {
 		agArgs = append(agArgs, modelFilter)
 	}
-	aggRows, _ := DB.Query(`
+	aggRows, _ := s.db.Query(`
 		SELECT strftime('%Y-%m-%d %H:00', substr(created_at, 1, 19)) as hour,
 		       COUNT(*) as cnt,
 		       SUM(CASE WHEN is_error=1 THEN 1 ELSE 0 END) as errs
@@ -226,7 +219,7 @@ func GetStats(start, end time.Time, modelFilter string) (*models.StatsResponse, 
 	return &stats, nil
 }
 
-func GetModelLogs(model string, start, end time.Time, limit int) ([]models.RequestLog, error) {
+func (s *SQLiteStore) GetModelLogs(model string, start, end time.Time, limit int) ([]models.RequestLog, error) {
 	startStr := start.UTC().Format(time.RFC3339Nano)
 	endStr := end.UTC().Format(time.RFC3339Nano)
 
@@ -239,7 +232,7 @@ func GetModelLogs(model string, start, end time.Time, limit int) ([]models.Reque
 		WHERE created_at >= ? AND created_at <= ? AND model = ?
 		ORDER BY created_at DESC LIMIT ?`
 
-	rows, err := DB.Query(query, startStr, endStr, model, limit)
+	rows, err := s.db.Query(query, startStr, endStr, model, limit)
 	if err != nil {
 		return nil, err
 	}

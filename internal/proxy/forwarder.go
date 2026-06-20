@@ -41,18 +41,40 @@ func ExtractRequestSummary(body []byte) string {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"messages"`
+		// Also handle Responses API input field
+		Input json.RawMessage `json:"input"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		return Truncate(string(body), 200)
 	}
-	// Find last user message
+	// Try messages first (chat completions format)
 	for i := len(req.Messages) - 1; i >= 0; i-- {
 		if req.Messages[i].Role == "user" {
 			return Truncate(req.Messages[i].Content, 200)
 		}
-		// Also accept "system" as context summary
 		if req.Messages[i].Role == "system" && len(req.Messages) == 1 {
 			return Truncate(req.Messages[i].Content, 200)
+		}
+	}
+	// Try input field (Responses API format)
+	if len(req.Input) > 0 {
+		var text string
+		if err := json.Unmarshal(req.Input, &text); err == nil {
+			return Truncate(text, 200)
+		}
+		var items []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}
+		if err := json.Unmarshal(req.Input, &items); err == nil {
+			for i := len(items) - 1; i >= 0; i-- {
+				if items[i].Role == "user" {
+					return Truncate(items[i].Content, 200)
+				}
+			}
+			if len(items) > 0 {
+				return Truncate(items[0].Content, 200)
+			}
 		}
 	}
 	return Truncate(string(body), 200)
@@ -99,16 +121,21 @@ func ExtractResponseSummary(body []byte) string {
 	return ""
 }
 
-func findModelConfig(provider *models.Provider, requestedModel string) *models.ModelConfig {
+func FindModelConfig(provider *models.Provider, requestedModel string) *models.ModelConfig {
+	modelName := requestedModel
+	prefix := provider.Name + "."
+	if strings.HasPrefix(modelName, prefix) {
+		modelName = modelName[len(prefix):]
+	}
 	for i := range provider.Models {
-		if provider.Models[i].Name == requestedModel || provider.Models[i].DisplayName == requestedModel {
+		if provider.Models[i].Name == modelName || provider.Models[i].DisplayName == modelName {
 			return &provider.Models[i]
 		}
 	}
 	return nil
 }
 
-func mergeExtraBody(body []byte, extraBody map[string]interface{}) []byte {
+func MergeExtraBody(body []byte, extraBody map[string]interface{}) []byte {
 	if len(extraBody) == 0 {
 		return body
 	}
@@ -144,8 +171,8 @@ func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path stri
 	}
 
 	// Merge model-specific extra_body if present
-	if mc := findModelConfig(provider, reqBody.Model); mc != nil && mc.ExtraBody != nil {
-		body = mergeExtraBody(body, mc.ExtraBody)
+	if mc := FindModelConfig(provider, reqBody.Model); mc != nil && mc.ExtraBody != nil {
+		body = MergeExtraBody(body, mc.ExtraBody)
 	}
 
 	targetURL := strings.TrimRight(provider.BaseURL, "/") + path
@@ -205,7 +232,7 @@ func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path stri
 				break
 			}
 		}
-		pt, ct, ict := parseTokens(sw.lastUsage)
+		pt, ct, ict := ParseTokens(sw.lastUsage)
 		if pt+ct+ict == 0 {
 			pt = estimatePromptTokens(body)
 		}
@@ -226,7 +253,7 @@ func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path stri
 		return
 	}
 
-	pt, ct, ict := parseTokens(respBody)
+	pt, ct, ict := ParseTokens(respBody)
 	c.Set("proxy_prompt_tokens", pt)
 	c.Set("proxy_completion_tokens", ct)
 	c.Set("proxy_input_cache_tokens", ict)
@@ -258,7 +285,7 @@ type openAIResponse struct {
 	Usage *openAIUsage `json:"usage"`
 }
 
-func parseTokens(body []byte) (int, int, int) {
+func ParseTokens(body []byte) (int, int, int) {
 	if len(body) == 0 {
 		return 0, 0, 0
 	}

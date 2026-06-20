@@ -12,14 +12,15 @@ import (
 type Router struct {
 	mu        sync.RWMutex
 	providers []models.Provider
+	store     db.Store
 }
 
-func NewRouter() *Router {
-	return &Router{}
+func NewRouter(store db.Store) *Router {
+	return &Router{store: store}
 }
 
 func (r *Router) Refresh() error {
-	providers, err := db.ListProviders()
+	providers, err := r.store.ListProviders()
 	if err != nil {
 		return err
 	}
@@ -33,6 +34,20 @@ func (r *Router) FindProvider(model string) (*models.Provider, error) {
 	r.mu.RLock()
 	providers := r.providers
 	r.mu.RUnlock()
+
+	for i := range providers {
+		p := &providers[i]
+		prefix := p.Name + "."
+		if strings.HasPrefix(model, prefix) {
+			suffix := model[len(prefix):]
+			for _, m := range p.Models {
+				if m.Name == suffix || m.DisplayName == suffix {
+					cp := *p
+					return &cp, nil
+				}
+			}
+		}
+	}
 
 	for i := range providers {
 		p := &providers[i]

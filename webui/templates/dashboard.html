@@ -180,20 +180,30 @@ function loadModelNameMap() {
     fetch('/admin/api/providers')
         .then(r => r.json())
         .then(providers => {
-            const map = {};
+            const seen = {};
             if (Array.isArray(providers)) {
                 providers.forEach(p => {
                     if (p.models && Array.isArray(p.models)) {
                         p.models.forEach(m => {
                             if (m.name && m.display_name) {
-                                map[m.name] = m.display_name;
-                                if (m.name !== m.display_name) {
-                                    map[m.display_name] = m.display_name;
+                                if (seen[m.name] === undefined) {
+                                    seen[m.name] = m.display_name;
+                                } else if (seen[m.name] !== m.display_name) {
+                                    seen[m.name] = false; // conflict
                                 }
                             }
                         });
                     }
                 });
+            }
+            const map = {};
+            for (const [name, display] of Object.entries(seen)) {
+                if (display !== false) {
+                    map[name] = display;
+                    if (name !== display) {
+                        map[display] = display;
+                    }
+                }
             }
             modelNameMap = map;
             // Re-render if data already loaded

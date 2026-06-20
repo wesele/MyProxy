@@ -14,8 +14,18 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
+	Host        string `yaml:"host"`
+	Port        int    `yaml:"port"`
+	TLSEnabled  *bool  `yaml:"tls_enabled"`
+	CertFile    string `yaml:"cert_file"`
+	KeyFile     string `yaml:"key_file"`
+}
+
+func (s *ServerConfig) IsTLSEnabled() bool {
+	if s.TLSEnabled == nil {
+		return true
+	}
+	return *s.TLSEnabled
 }
 
 type DatabaseConfig struct {
@@ -60,5 +70,11 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.WebUI.Python == "" {
 		cfg.WebUI.Python = "python"
+	}
+	if cfg.Server.CertFile == "" {
+		cfg.Server.CertFile = "data/cert.pem"
+	}
+	if cfg.Server.KeyFile == "" {
+		cfg.Server.KeyFile = "data/key.pem"
 	}
 }
