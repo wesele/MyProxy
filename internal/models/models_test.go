@@ -396,7 +396,7 @@ func TestApiKey(t *testing.T) {
 		}
 	})
 
-	t.Run("omitempty key_value when empty", func(t *testing.T) {
+	t.Run("key_value included even when empty", func(t *testing.T) {
 		k := ApiKey{
 			ID:   1,
 			Name: "test",
@@ -406,8 +406,8 @@ func TestApiKey(t *testing.T) {
 			t.Fatalf("marshal error: %v", err)
 		}
 		raw := string(data)
-		if strings.Contains(raw, `"key_value"`) {
-			t.Error("empty key_value should be omitted")
+		if !strings.Contains(raw, `"key_value"`) {
+			t.Error("key_value should be included even when empty")
 		}
 	})
 }

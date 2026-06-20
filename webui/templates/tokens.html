@@ -68,7 +68,7 @@ async function loadTokens() {
         <tr>
             <td>${t.id}</td>
             <td>${t.name}</td>
-            <td style="max-width:320px;overflow:hidden;text-overflow:ellipsis;"><code>${t.key_value}</code></td>
+            <td style="max-width:320px;overflow:hidden;text-overflow:ellipsis;"><code>${t.key_value || 'N/A'}</code></td>
             <td><span class="badge ${t.is_active ? 'badge-active' : 'badge-inactive'}">${t.is_active ? 'Active' : 'Inactive'}</span></td>
             <td>${t.rate_limit_rpm || 'unlimited'}</td>
             <td>${t.created_at ? new Date(t.created_at).toLocaleDateString() : '-'}</td>
