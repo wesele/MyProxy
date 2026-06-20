@@ -57,15 +57,15 @@ func main() {
 
 	forwarder := proxy.NewForwarder(logger)
 
+	authManager := auth.NewAuthManager("data/password.txt")
+
 	openAIHandler := api.NewOpenAIHandler(forwarder, router_, logger, store)
 	geminiHandler := api.NewGeminiHandler(forwarder, router_, logger)
 	openAIHandler.SetGeminiHandler(geminiHandler)
 	responsesHandler := api.NewResponsesHandler(forwarder, router_, logger, store)
 	responsesHandler.SetGeminiHandler(geminiHandler)
 	claudeHandler := api.NewClaudeHandler(forwarder, router_, logger)
-	adminHandler := api.NewAdminHandler(logger, router_, store)
-
-	authManager := auth.NewAuthManager("data/password.txt")
+	adminHandler := api.NewAdminHandler(logger, router_, store, authManager)
 	loginHandler := api.NewLoginHandler(authManager, logger)
 
 	if cfg.Server.IsTLSEnabled() {
@@ -81,6 +81,8 @@ func main() {
 	r.GET("/", func(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/admin/dashboard")
 	})
+
+	r.POST("/api/genToken", adminHandler.GenToken)
 
 	apiAuth := middleware.AuthMiddleware(store)
 	r.GET("/v1/models", apiAuth, openAIHandler.ListModels)

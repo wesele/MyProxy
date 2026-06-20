@@ -48,9 +48,20 @@
         <a href="{{ url_for('dashboard') }}" class="{% if request.path == '/admin/dashboard' %}active{% endif %}">Dashboard</a>
         <a href="{{ url_for('models') }}" class="{% if 'models' in request.path and 'fetch' not in request.path %}active{% endif %}">Models</a>
         <a href="{{ url_for('providers') }}" class="{% if 'providers' in request.path %}active{% endif %}">Providers</a>
+        <a href="{{ url_for('tokens') }}" class="{% if 'tokens' in request.path %}active{% endif %}">Tokens</a>
         <a href="{{ url_for('tools') }}" class="{% if 'tools' in request.path %}active{% endif %}">Tools</a>
         <a href="{{ url_for('api_docs') }}" class="{% if request.path == '/admin/api' %}active{% endif %}">API</a>
+        <a href="#" onclick="logout()" style="margin-left:auto;color:#e63946;font-size:13px;">Logout</a>
     </nav>
+    <script>
+    async function logout() {
+        if (!confirm('Are you sure you want to logout?')) return;
+        try {
+            await fetch('/admin/api/logout', { method: 'POST' });
+        } catch(e) {}
+        window.location.href = '/admin/login';
+    }
+    </script>
     <div class="container">
         {% block content %}{% endblock %}
     </div>

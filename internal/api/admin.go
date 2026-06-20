@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/user/qwenportal/internal/auth"
 	"github.com/user/qwenportal/internal/db"
 	"github.com/user/qwenportal/internal/models"
 	"github.com/user/qwenportal/internal/proxy"
@@ -308,7 +309,7 @@ func parseTokensFromBody(body []byte, providerType string) int {
 	case "gemini":
 		var resp struct {
 			UsageMetadata *struct {
-				CandidatesTokenCount  int                    `json:"candidatesTokenCount"`
+				CandidatesTokenCount  int `json:"candidatesTokenCount"`
 				CandidatesTokensDetails []struct {
 					Modality   string `json:"modality"`
 					TokenCount int    `json:"tokenCount"`
@@ -342,7 +343,6 @@ func parseTokensFromBody(body []byte, providerType string) int {
 			}
 			return ct
 		}
-		// Fallback: try numeric content length as token estimate
 		var fallback struct {
 			Choices []struct {
 				Message struct {
@@ -351,7 +351,6 @@ func parseTokensFromBody(body []byte, providerType string) int {
 			} `json:"choices"`
 		}
 		if err := json.Unmarshal(body, &fallback); err == nil && len(fallback.Choices) > 0 {
-			// Rough estimate: ~4 chars per token for English
 			return len(fallback.Choices[0].Message.Content) / 4
 		}
 	}
@@ -405,12 +404,14 @@ func extractContentFromBody(body []byte, providerType string) string {
 }
 
 type AdminHandler struct {
-	logger *zap.Logger
-	router *proxy.Router
+	logger      *zap.Logger
+	router      *proxy.Router
+	store       db.Store
+	authManager *auth.AuthManager
 }
 
-func NewAdminHandler(l *zap.Logger, r *proxy.Router) *AdminHandler {
-	return &AdminHandler{logger: l, router: r}
+func NewAdminHandler(l *zap.Logger, r *proxy.Router, s db.Store, a *auth.AuthManager) *AdminHandler {
+	return &AdminHandler{logger: l, router: r, store: s, authManager: a}
 }
 
 func maskAPIKey(key string) string {
@@ -428,7 +429,7 @@ func (h *AdminHandler) resolveAPIKey(baseURL, providerType, key string) string {
 	if !isMaskedKey(key) {
 		return key
 	}
-	providers, err := db.ListProviders()
+	providers, err := h.store.ListProviders()
 	if err != nil {
 		return key
 	}
@@ -443,7 +444,7 @@ func (h *AdminHandler) resolveAPIKey(baseURL, providerType, key string) string {
 }
 
 func (h *AdminHandler) ListProviders(c *gin.Context) {
-	providers, err := db.ListProviders()
+	providers, err := h.store.ListProviders()
 	if err != nil {
 		h.logger.Error("list providers", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -461,7 +462,7 @@ func (h *AdminHandler) ListProviders(c *gin.Context) {
 }
 
 func (h *AdminHandler) ExportProviders(c *gin.Context) {
-	providers, err := db.ListProviders()
+	providers, err := h.store.ListProviders()
 	if err != nil {
 		h.logger.Error("export providers", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -470,7 +471,6 @@ func (h *AdminHandler) ExportProviders(c *gin.Context) {
 	if providers == nil {
 		providers = []models.Provider{}
 	}
-	// Return full provider data including unmasked API keys for backup
 	c.Header("Content-Disposition", "attachment; filename=providers-backup.json")
 	c.JSON(http.StatusOK, providers)
 }
@@ -489,22 +489,20 @@ func (h *AdminHandler) ImportProviders(c *gin.Context) {
 	skipped := 0
 
 	for _, p := range payload.Providers {
-		existing, err := db.FindProviderByName(p.Name)
+		existing, err := h.store.FindProviderByName(p.Name)
 		if err != nil {
-			// Create new
-			if _, err := db.CreateProvider(&p); err != nil {
+			if _, err := h.store.CreateProvider(&p); err != nil {
 				h.logger.Warn("import create failed", zap.String("name", p.Name), zap.Error(err))
 				skipped++
 				continue
 			}
 			imported++
 		} else {
-			// Update existing: preserve existing API key if import has empty key
 			p.ID = existing.ID
 			if p.APIKey == "" {
 				p.APIKey = existing.APIKey
 			}
-			if err := db.UpdateProvider(&p); err != nil {
+			if err := h.store.UpdateProvider(&p); err != nil {
 				h.logger.Warn("import update failed", zap.String("name", p.Name), zap.Error(err))
 				skipped++
 				continue
@@ -528,13 +526,13 @@ func (h *AdminHandler) CreateProvider(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	id, err := db.CreateProvider(&p)
+	id, err := h.store.CreateProvider(&p)
 	if err != nil {
 		h.logger.Error("create provider", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	created, _ := db.GetProvider(id)
+	created, _ := h.store.GetProvider(id)
 	created.APIKey = maskAPIKey(created.APIKey)
 	h.router.Refresh()
 	c.JSON(http.StatusCreated, created)
@@ -546,7 +544,7 @@ func (h *AdminHandler) GetProvider(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
 	}
-	p, err := db.GetProvider(id)
+	p, err := h.store.GetProvider(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "provider not found"})
 		return
@@ -564,7 +562,7 @@ func (h *AdminHandler) UpdateProvider(c *gin.Context) {
 		return
 	}
 
-	existing, err := db.GetProvider(id)
+	existing, err := h.store.GetProvider(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "provider not found"})
 		return
@@ -581,12 +579,12 @@ func (h *AdminHandler) UpdateProvider(c *gin.Context) {
 		p.APIKey = existing.APIKey
 	}
 
-	if err := db.UpdateProvider(&p); err != nil {
+	if err := h.store.UpdateProvider(&p); err != nil {
 		h.logger.Error("update provider", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	updated, _ := db.GetProvider(id)
+	updated, _ := h.store.GetProvider(id)
 	updated.APIKey = maskAPIKey(updated.APIKey)
 	h.router.Refresh()
 	c.JSON(http.StatusOK, updated)
@@ -598,7 +596,7 @@ func (h *AdminHandler) DeleteProvider(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
 	}
-	if err := db.DeleteProvider(id); err != nil {
+	if err := h.store.DeleteProvider(id); err != nil {
 		h.logger.Error("delete provider", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -608,7 +606,7 @@ func (h *AdminHandler) DeleteProvider(c *gin.Context) {
 }
 
 func (h *AdminHandler) ListApiKeys(c *gin.Context) {
-	keys, err := db.ListApiKeys()
+	keys, err := h.store.ListApiKeys()
 	if err != nil {
 		h.logger.Error("list api keys", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -629,7 +627,7 @@ func (h *AdminHandler) CreateApiKey(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	key, err := db.CreateApiKey(req.Name, req.RateLimitRPM)
+	key, err := h.store.CreateApiKey(req.Name, req.RateLimitRPM)
 	if err != nil {
 		h.logger.Error("create api key", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -657,7 +655,7 @@ func (h *AdminHandler) UpdateApiKey(c *gin.Context) {
 	if req.IsActive != nil {
 		isActive = *req.IsActive
 	}
-	if err := db.UpdateApiKey(id, req.Name, isActive, req.RateLimitRPM); err != nil {
+	if err := h.store.UpdateApiKey(id, req.Name, isActive, req.RateLimitRPM); err != nil {
 		h.logger.Error("update api key", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -671,12 +669,53 @@ func (h *AdminHandler) DeleteApiKey(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
 	}
-	if err := db.DeleteApiKey(id); err != nil {
+	if err := h.store.DeleteApiKey(id); err != nil {
 		h.logger.Error("delete api key", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+}
+
+type genTokenRequest struct {
+	Name     string `json:"name"`
+	Password string `json:"password"`
+}
+
+func (h *AdminHandler) GenToken(c *gin.Context) {
+	var req genTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	if req.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+	if req.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "password is required"})
+		return
+	}
+	if h.authManager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "auth not configured"})
+		return
+	}
+	if !h.authManager.VerifyPassword(req.Password) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid password"})
+		return
+	}
+	existing, err := h.store.GetApiKeyByName(req.Name)
+	if err == nil && existing != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "token name already exists"})
+		return
+	}
+	key, err := h.store.CreateApiKey(req.Name, 0)
+	if err != nil {
+		h.logger.Error("create api key", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, key)
 }
 
 type providerTestReq struct {
@@ -758,58 +797,56 @@ func (h *AdminHandler) FetchProviderModels(c *gin.Context) {
 }
 
 func parseUpstreamModels(body []byte) []models.ModelConfig {
-	// Try OpenAI format: {"data": [{"id": "...", ...}]}
 	var openAIList struct {
 		Data []upstreamModelInfo `json:"data"`
 	}
 	if json.Unmarshal(body, &openAIList) == nil && len(openAIList.Data) > 0 {
 		result := make([]models.ModelConfig, 0, len(openAIList.Data))
 		for _, m := range openAIList.Data {
-		mc := models.ModelConfig{
-			Name:        m.ID,
-			DisplayName: m.ID,
-		}
-		if m.MaxTokens > 0 {
-			mc.MaxTokens = m.MaxTokens
-		}
-		if m.MaxInputTokens > 0 {
-			mc.MaxInputTokens = m.MaxInputTokens
-		} else if m.ContextWindow > 0 {
-			mc.MaxInputTokens = m.ContextWindow
-		}
-		if m.Pricing != nil {
-			if m.Pricing.Input > 0 {
-				mc.InputPrice = m.Pricing.Input
-			} else if m.Pricing.Prompt > 0 {
-				mc.InputPrice = m.Pricing.Prompt
+			mc := models.ModelConfig{
+				Name:        m.ID,
+				DisplayName: m.ID,
 			}
-			if m.Pricing.Output > 0 {
-				mc.OutputPrice = m.Pricing.Output
-			} else if m.Pricing.Completion > 0 {
-				mc.OutputPrice = m.Pricing.Completion
+			if m.MaxTokens > 0 {
+				mc.MaxTokens = m.MaxTokens
 			}
-		}
-		if m.InputPrice > 0 {
-			mc.InputPrice = m.InputPrice
-		}
-		if m.OutputPrice > 0 {
-			mc.OutputPrice = m.OutputPrice
-		}
-		if m.InputCachePrice > 0 {
-			mc.InputCachePrice = m.InputCachePrice
-		} else if m.Pricing != nil && m.Pricing.CacheInput > 0 {
-			mc.InputCachePrice = m.Pricing.CacheInput
-		}
-		result = append(result, mc)
+			if m.MaxInputTokens > 0 {
+				mc.MaxInputTokens = m.MaxInputTokens
+			} else if m.ContextWindow > 0 {
+				mc.MaxInputTokens = m.ContextWindow
+			}
+			if m.Pricing != nil {
+				if m.Pricing.Input > 0 {
+					mc.InputPrice = m.Pricing.Input
+				} else if m.Pricing.Prompt > 0 {
+					mc.InputPrice = m.Pricing.Prompt
+				}
+				if m.Pricing.Output > 0 {
+					mc.OutputPrice = m.Pricing.Output
+				} else if m.Pricing.Completion > 0 {
+					mc.OutputPrice = m.Pricing.Completion
+				}
+			}
+			if m.InputPrice > 0 {
+				mc.InputPrice = m.InputPrice
+			}
+			if m.OutputPrice > 0 {
+				mc.OutputPrice = m.OutputPrice
+			}
+			if m.InputCachePrice > 0 {
+				mc.InputCachePrice = m.InputCachePrice
+			} else if m.Pricing != nil && m.Pricing.CacheInput > 0 {
+				mc.InputCachePrice = m.Pricing.CacheInput
+			}
+			result = append(result, mc)
 		}
 		return result
 	}
 
-	// Try Gemini format: {"models": [{"name": "...", ...}]}
 	var geminiList struct {
 		Models []struct {
-			Name       string `json:"name"`
-			Version    string `json:"version"`
+			Name        string  `json:"name"`
+			Version     string  `json:"version"`
 			InputPrice  float64 `json:"input_price,omitempty"`
 			OutputPrice float64 `json:"output_price,omitempty"`
 		} `json:"models"`
@@ -821,10 +858,10 @@ func parseUpstreamModels(body []byte) []models.ModelConfig {
 			if len(name) > 7 && name[:7] == "models/" {
 				name = name[7:]
 			}
-		mc := models.ModelConfig{
-			Name:        name,
-			DisplayName: name,
-		}
+			mc := models.ModelConfig{
+				Name:        name,
+				DisplayName: name,
+			}
 			if m.InputPrice > 0 {
 				mc.InputPrice = m.InputPrice
 			}
@@ -877,7 +914,6 @@ func (h *AdminHandler) TestProvider(c *gin.Context) {
 		httpReq.Header.Set("x-api-key", req.APIKey)
 		httpReq.Header.Set("anthropic-version", "2023-06-01")
 	} else if req.ProviderType == "gemini" {
-		// Gemini uses API key as query param and a different endpoint
 		geminiBody := map[string]interface{}{
 			"contents": []map[string]interface{}{
 				{
@@ -952,7 +988,7 @@ func (h *AdminHandler) GetStats(c *gin.Context) {
 		start = end.Add(-time.Duration(hours) * time.Hour)
 	}
 
-	stats, err := db.GetStats(start, end, modelFilter)
+	stats, err := h.store.GetStats(start, end, modelFilter)
 	if err != nil {
 		h.logger.Error("get stats", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -962,7 +998,7 @@ func (h *AdminHandler) GetStats(c *gin.Context) {
 }
 
 func (h *AdminHandler) GetModelLogs(c *gin.Context) {
-model := c.Query("model")
+	model := c.Query("model")
 	if model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "model query param required"})
 		return
@@ -1002,7 +1038,7 @@ model := c.Query("model")
 		limit = 1000
 	}
 
-	logs, err := db.GetModelLogs(model, start, end, limit)
+	logs, err := h.store.GetModelLogs(model, start, end, limit)
 	if err != nil {
 		h.logger.Error("get model logs", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1032,7 +1068,7 @@ func (h *AdminHandler) TrainingStart(c *gin.Context) {
 	if req.Tool == "" {
 		req.Tool = "pelvic_floor"
 	}
-	id, err := db.StartTraining(req.Tool)
+	id, err := h.store.StartTraining(req.Tool)
 	if err != nil {
 		h.logger.Error("start training", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1049,7 +1085,7 @@ func (h *AdminHandler) TrainingStop(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := db.StopTraining(req.ID); err != nil {
+	if err := h.store.StopTraining(req.ID); err != nil {
 		h.logger.Error("stop training", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1063,7 +1099,7 @@ func (h *AdminHandler) TrainingStats(c *gin.Context) {
 	if days < 1 {
 		days = 7
 	}
-	stats, err := db.GetTrainingStats(tool, days)
+	stats, err := h.store.GetTrainingStats(tool, days)
 	if err != nil {
 		h.logger.Error("training stats", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1074,7 +1110,7 @@ func (h *AdminHandler) TrainingStats(c *gin.Context) {
 
 func (h *AdminHandler) TrainingActive(c *gin.Context) {
 	tool := c.DefaultQuery("tool", "pelvic_floor")
-	id, err := db.GetActiveTraining(tool)
+	id, err := h.store.GetActiveTraining(tool)
 	if err != nil {
 		h.logger.Error("active training", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

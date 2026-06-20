@@ -1,5 +1,6 @@
 import os
 import json
+import ssl
 import urllib.request
 import urllib.error
 from flask import Flask, render_template, request, jsonify, redirect, url_for, Response
@@ -9,18 +10,32 @@ app = Flask(__name__)
 API_BASE = os.environ.get("API_BASE", "http://127.0.0.1:8080/admin/api")
 
 
+def _ssl_ctx():
+    if API_BASE.startswith("https"):
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    return None
+
+
 def api_call(method, path, data=None):
     url = API_BASE + path
     headers = {"Content-Type": "application/json"}
     body = json.dumps(data).encode() if data else None
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, context=_ssl_ctx()) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         return {"error": e.read().decode()}
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.route("/admin/login")
+def login_page():
+    return render_template("login.html")
 
 
 @app.route("/admin")
@@ -126,6 +141,11 @@ def provider_delete(pid):
     return redirect(url_for("providers"))
 
 
+@app.route("/admin/tokens")
+def tokens():
+    return render_template("tokens.html")
+
+
 @app.route("/admin/tools")
 def tools():
     return render_template("tools.html")
@@ -159,8 +179,13 @@ def model_test():
     import http.client
     data = request.get_json()
     body = json.dumps(data).encode()
+    is_https = API_BASE.startswith("https")
+    port = int(os.environ.get("GO_PORT", 8080))
     try:
-        conn = http.client.HTTPConnection("127.0.0.1", 8080, timeout=600)
+        if is_https:
+            conn = http.client.HTTPSConnection("127.0.0.1", port, timeout=600, context=_ssl_ctx())
+        else:
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=600)
         conn.request("POST", "/admin/api/models/test", body, {"Content-Type": "application/json"})
         resp = conn.getresponse()
         def generate():

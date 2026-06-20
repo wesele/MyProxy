@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - My Proxy</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+        .login-card { background: white; border-radius: 12px; box-shadow: 0 4px 24px rgba(0,0,0,.12); padding: 40px; width: 380px; max-width: 90vw; }
+        .login-card h1 { font-size: 22px; font-weight: 700; text-align: center; margin-bottom: 8px; color: #1a1a2e; }
+        .login-card p { font-size: 13px; color: #888; text-align: center; margin-bottom: 28px; }
+        .form-group { margin-bottom: 18px; }
+        .form-group label { display: block; font-size: 13px; font-weight: 600; color: #555; margin-bottom: 6px; }
+        .form-group input[type="password"] { width: 100%; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 15px; outline: none; transition: border .2s; }
+        .form-group input[type="password"]:focus { border-color: #4361ee; box-shadow: 0 0 0 3px rgba(67,97,238,.15); }
+        .checkbox-group { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; font-size: 14px; color: #555; }
+        .checkbox-group input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+        .btn { width: 100%; padding: 11px; border-radius: 8px; font-size: 15px; font-weight: 600; border: none; cursor: pointer; background: #4361ee; color: white; transition: background .2s; }
+        .btn:hover { background: #3a56d4; }
+        .btn:disabled { opacity: .6; cursor: not-allowed; }
+        .error { background: #f8d7da; color: #721c24; padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; display: none; }
+        .error.visible { display: block; }
+        .spinner { display: none; width: 18px; height: 18px; border: 2px solid rgba(255,255,255,.3); border-top-color: white; border-radius: 50%; animation: spin .6s linear infinite; margin: 0 auto; }
+        .btn.loading .spinner { display: inline-block; }
+        .btn.loading .btn-text { display: none; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <h1>My Proxy</h1>
+        <p>Please enter the admin password to continue</p>
+        <div class="error" id="error-msg"></div>
+        <form id="login-form">
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" placeholder="Enter password" autofocus required>
+            </div>
+            <div class="checkbox-group">
+                <input type="checkbox" id="remember" name="remember">
+                <label for="remember">Remember me (30 days)</label>
+            </div>
+            <button type="submit" class="btn" id="login-btn">
+                <span class="btn-text">Login</span>
+                <span class="spinner"></span>
+            </button>
+        </form>
+    </div>
+    <script>
+        document.getElementById('login-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const btn = document.getElementById('login-btn');
+            const errEl = document.getElementById('error-msg');
+            const password = document.getElementById('password').value;
+            const remember = document.getElementById('remember').checked;
+
+            errEl.classList.remove('visible');
+            btn.classList.add('loading');
+
+            try {
+                const resp = await fetch('/admin/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password, remember })
+                });
+                const data = await resp.json();
+                if (resp.ok && data.success) {
+                    window.location.href = '/admin/dashboard';
+                } else {
+                    errEl.textContent = data.error || 'Login failed';
+                    errEl.classList.add('visible');
+                }
+            } catch (err) {
+                errEl.textContent = 'Network error: ' + err.message;
+                errEl.classList.add('visible');
+            } finally {
+                btn.classList.remove('loading');
+            }
+        });
+    </script>
+</body>
+</html>

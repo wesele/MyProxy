@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Tokens{% endblock %}
+{% block content %}
+<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h2 style="margin:0;">API Tokens</h2>
+        <button class="btn btn-primary btn-sm" onclick="showAddForm()">+ Add Token</button>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Key Prefix</th>
+                <th>Status</th>
+                <th>Rate Limit</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="token-list">
+            <tr><td colspan="7" class="empty">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<div id="add-form" class="card" style="display:none;">
+    <h2>Add Token</h2>
+    <div class="form-group">
+        <label>Token Name</label>
+        <input type="text" id="token-name" placeholder="e.g. my-app-token">
+    </div>
+    <div class="form-group">
+        <label>Admin Password</label>
+        <input type="password" id="admin-password" placeholder="system admin password">
+    </div>
+    <button class="btn btn-primary" onclick="createToken()">Create</button>
+    <button class="btn" onclick="hideAddForm()" style="margin-left:8px;">Cancel</button>
+    <div id="token-result" style="margin-top:12px;display:none;">
+        <div class="flash flash-success">
+            <strong>Token created!</strong> Save this key - it will not be shown again:
+            <div style="margin-top:8px;padding:8px;background:#f0f0f0;border-radius:4px;font-family:monospace;font-size:14px;word-break:break-all;" id="token-value"></div>
+        </div>
+    </div>
+</div>
+
+<div id="delete-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.4);z-index:1000;align-items:center;justify-content:center;">
+    <div style="background:white;border-radius:8px;padding:24px;max-width:400px;margin:auto;">
+        <h3 style="margin-bottom:12px;">Delete Token</h3>
+        <p style="margin-bottom:16px;font-size:14px;">Are you sure you want to delete token <strong id="delete-token-name"></strong>?</p>
+        <button class="btn btn-danger" onclick="confirmDelete()">Delete</button>
+        <button class="btn" onclick="hideDeleteModal()" style="margin-left:8px;">Cancel</button>
+    </div>
+</div>
+
+<script>
+let deleteId = null;
+
+async function loadTokens() {
+    const resp = await fetch('/admin/api/keys');
+    const data = await resp.json();
+    const tbody = document.getElementById('token-list');
+    if (!Array.isArray(data) || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty">No tokens yet</td></tr>';
+        return;
+    }
+    tbody.innerHTML = data.map(t => `
+        <tr>
+            <td>${t.id}</td>
+            <td>${t.name}</td>
+            <td><code>${t.key_prefix}...</code></td>
+            <td><span class="badge ${t.is_active ? 'badge-active' : 'badge-inactive'}">${t.is_active ? 'Active' : 'Inactive'}</span></td>
+            <td>${t.rate_limit_rpm || 'unlimited'}</td>
+            <td>${t.created_at ? new Date(t.created_at).toLocaleDateString() : '-'}</td>
+            <td>
+                <button class="btn btn-danger btn-sm" onclick="promptDelete(${t.id}, '${t.name}')">Delete</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function showAddForm() {
+    document.getElementById('add-form').style.display = 'block';
+    document.getElementById('token-result').style.display = 'none';
+    document.getElementById('token-name').value = '';
+    document.getElementById('admin-password').value = '';
+}
+
+function hideAddForm() {
+    document.getElementById('add-form').style.display = 'none';
+}
+
+async function createToken() {
+    const name = document.getElementById('token-name').value.trim();
+    const password = document.getElementById('admin-password').value;
+    if (!name) { alert('Name is required'); return; }
+    if (!password) { alert('Admin password is required'); return; }
+    const resp = await fetch('/api/genToken', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, password})
+    });
+    const data = await resp.json();
+    if (resp.status === 201 && data.key_value) {
+        document.getElementById('token-value').textContent = data.key_value;
+        document.getElementById('token-result').style.display = 'block';
+        document.getElementById('token-name').value = '';
+        document.getElementById('admin-password').value = '';
+        loadTokens();
+    } else {
+        alert('Error: ' + (data.error || 'unknown error'));
+    }
+}
+
+function promptDelete(id, name) {
+    deleteId = id;
+    document.getElementById('delete-token-name').textContent = name;
+    document.getElementById('delete-modal').style.display = 'flex';
+}
+
+function hideDeleteModal() {
+    document.getElementById('delete-modal').style.display = 'none';
+    deleteId = null;
+}
+
+async function confirmDelete() {
+    if (deleteId === null) return;
+    const resp = await fetch(`/admin/api/keys/${deleteId}`, { method: 'DELETE' });
+    const data = await resp.json();
+    if (resp.ok) {
+        hideDeleteModal();
+        loadTokens();
+    } else {
+        alert('Error: ' + (data.error || 'unknown error'));
+    }
+}
+
+loadTokens();
+</script>
+{% endblock %}
