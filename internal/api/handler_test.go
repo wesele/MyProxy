@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/user/qwenportal/internal/db"
+	"github.com/user/qwenportal/internal/middleware"
 	"github.com/user/qwenportal/internal/models"
 	"github.com/user/qwenportal/internal/proxy"
 	"go.uber.org/zap"
@@ -357,10 +358,16 @@ func TestOpenAIHandler_ChatCompletions(t *testing.T) {
 
 		body := `{"model":"unknown-model","messages":[{"role":"user","content":"hi"}]}`
 		c, w := newTestContext("POST", "/v1/chat/completions", strings.NewReader(body))
+		// Set up a log_entry to verify model is set even on 404
+		entry := &middleware.LogEntry{RequestID: "test-123"}
+		c.Set("log_entry", entry)
 		handler.ChatCompletions(c)
 
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("expected 404, got %d", w.Code)
+		}
+		if entry.Model != "unknown-model" {
+			t.Errorf("expected log_entry.Model='unknown-model', got %q", entry.Model)
 		}
 	})
 

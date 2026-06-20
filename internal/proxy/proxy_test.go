@@ -685,6 +685,58 @@ func TestParseTokens_NoUsage(t *testing.T) {
 }
 
 // =============================================================================
+// estimateCompletionTokens Tests
+// =============================================================================
+
+func TestEstimateCompletionTokens_OpenAIChoices(t *testing.T) {
+	body := []byte(`{"choices":[{"message":{"content":"Hello world!"}}]}`)
+	n := estimateCompletionTokens(body)
+	if n < 1 {
+		t.Errorf("expected >0 tokens, got %d", n)
+	}
+}
+
+func TestEstimateCompletionTokens_DeltaContent(t *testing.T) {
+	body := []byte(`{"choices":[{"delta":{"content":"Hello world!"}}]}`)
+	n := estimateCompletionTokens(body)
+	if n < 1 {
+		t.Errorf("expected >0 tokens, got %d", n)
+	}
+}
+
+func TestEstimateCompletionTokens_TextChoice(t *testing.T) {
+	body := []byte(`{"choices":[{"text":"Hello world!"}]}`)
+	n := estimateCompletionTokens(body)
+	if n < 1 {
+		t.Errorf("expected >0 tokens, got %d", n)
+	}
+}
+
+func TestEstimateCompletionTokens_EmptyBody(t *testing.T) {
+	n := estimateCompletionTokens([]byte{})
+	if n != 0 {
+		t.Errorf("expected 0, got %d", n)
+	}
+}
+
+func TestEstimateCompletionTokens_LongContent(t *testing.T) {
+	content := "Hello " + strings.Repeat("world ", 100)
+	body := []byte(`{"choices":[{"message":{"content":"` + content + `"}}]}`)
+	n := estimateCompletionTokens(body)
+	if n < 100 {
+		t.Errorf("expected >=100 tokens for long content, got %d", n)
+	}
+}
+
+func TestEstimateCompletionTokens_InvalidJSON(t *testing.T) {
+	body := []byte(`not json but long enough to get some estimate`)
+	n := estimateCompletionTokens(body)
+	if n < 1 {
+		t.Errorf("expected >0 tokens for raw body fallback, got %d", n)
+	}
+}
+
+// =============================================================================
 // sseWriter Tests
 // =============================================================================
 

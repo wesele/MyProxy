@@ -264,6 +264,10 @@ func (h *ResponsesHandler) Responses(c *gin.Context) {
 		return
 	}
 
+	if entry, exists := c.Get("log_entry"); exists {
+		entry.(*middleware.LogEntry).Model = respReq.Model
+	}
+
 	provider, err := h.router.FindProvider(respReq.Model)
 	if err != nil {
 		c.JSON(http.StatusNotFound, responsesErrorResponse{
@@ -283,9 +287,6 @@ func (h *ResponsesHandler) Responses(c *gin.Context) {
 	}
 
 	c.Set("provider_id", provider.ID)
-	if entry, exists := c.Get("log_entry"); exists {
-		entry.(*middleware.LogEntry).Model = respReq.Model
-	}
 
 	if provider.ProviderType == "gemini" && h.geminiHandler != nil {
 		h.handleGeminiResponses(c, body, provider, upstreamModel, respReq)

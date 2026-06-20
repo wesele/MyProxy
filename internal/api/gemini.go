@@ -301,6 +301,10 @@ func (h *GeminiHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	if entry, exists := c.Get("log_entry"); exists {
+		entry.(*middleware.LogEntry).Model = reqBody.Model
+	}
+
 	provider, err := h.router.FindProvider(reqBody.Model)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -308,9 +312,6 @@ func (h *GeminiHandler) ChatCompletions(c *gin.Context) {
 	}
 
 	c.Set("provider_id", provider.ID)
-	if entry, exists := c.Get("log_entry"); exists {
-		entry.(*middleware.LogEntry).Model = reqBody.Model
-	}
 
 	geminiBody, modelName, err := translateOpenAIToGemini(body)
 	if err != nil {

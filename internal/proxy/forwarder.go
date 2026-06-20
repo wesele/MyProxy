@@ -80,6 +80,45 @@ func ExtractRequestSummary(body []byte) string {
 	return Truncate(string(body), 200)
 }
 
+// estimateCompletionTokens estimates the number of completion tokens from the response body.
+func estimateCompletionTokens(respBody []byte) int {
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			Delta struct {
+				Content string `json:"content"`
+			} `json:"delta"`
+			Text string `json:"text"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		// Fallback: approximate from raw body length
+		if len(respBody) > 0 {
+			return len(respBody) / 4
+		}
+		return 0
+	}
+	for _, ch := range resp.Choices {
+		content := ch.Message.Content
+		if content == "" {
+			content = ch.Delta.Content
+		}
+		if content == "" {
+			content = ch.Text
+		}
+		if content != "" {
+			n := len([]rune(content))
+			if n/4 < 1 {
+				return 1
+			}
+			return n / 4
+		}
+	}
+	return len(respBody) / 4
+}
+
 // estimatePromptTokens estimates the number of prompt tokens from the request body
 // by summing all message content and dividing by 4 (rough English token ratio).
 func estimatePromptTokens(body []byte) int {
@@ -254,9 +293,17 @@ func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path stri
 	}
 
 	pt, ct, ict := ParseTokens(respBody)
-	c.Set("proxy_prompt_tokens", pt)
-	c.Set("proxy_completion_tokens", ct)
-	c.Set("proxy_input_cache_tokens", ict)
+	if pt+ct+ict == 0 {
+		pt = estimatePromptTokens(body)
+		if ct == 0 {
+			ct = estimateCompletionTokens(respBody)
+		}
+	}
+	if pt+ct+ict > 0 {
+		c.Set("proxy_prompt_tokens", pt)
+		c.Set("proxy_completion_tokens", ct)
+		c.Set("proxy_input_cache_tokens", ict)
+	}
 
 	// Store response summary
 	c.Set("response_summary", ExtractResponseSummary(respBody))
