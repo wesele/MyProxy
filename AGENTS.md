@@ -24,23 +24,8 @@
 - **所有修改完成后必须测试**：
 
 ### 5. 编译与重启
-- 修改涉及 Go 后端代码 → 自动执行 `go build -o qwenportal.exe ./cmd/qwenportal` 编译。
-- 如果需要编译且编译前该程序正在运行就先退出程序，编译完成后重启。
-- 重启方式（避免阻塞当前 shell）：
-  ```powershell
-  # 1. 杀旧进程
-  Get-Process -Name "qwenportal" -ErrorAction SilentlyContinue | Stop-Process -Force
-  Get-Process -Name "python*" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match "app.py" } | Stop-Process -Force
-  Start-Sleep -Seconds 1
+- 修改涉及 Go 后端代码，自动重新编译并提示用户重启服务端。
 
-  # 2. 清理旧日志文件（避免文件锁导致重定向失败）
-  Remove-Item "data\server.log" -ErrorAction SilentlyContinue
-  Remove-Item "data\server.err" -ErrorAction SilentlyContinue
-
-  # 3. 后台启动（使用 cmd /c start /b 不会阻塞 Bash 工具）
-  cmd /c start /b .\qwenportal.exe > data\server.log 2> data\server.err
-  ```
-- 如编译失败 → 修复后重试，不得跳过
 
 ### 6. 提交
 - 任务收尾时自动 commit 到**本地 git**（用户不要求也要做）；push / 发版仍需用户明确要求

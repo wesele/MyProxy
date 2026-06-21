@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyProxy - LLM API Unified Gateway</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="container">
+    <h1>MyProxy</h1>
+    <p class="subtitle">LLM API Unified Proxy Gateway</p>
+  </div>
+</header>
+
+<main class="container">
+  <section class="hero">
+    <h2>一键部署，统一接入所有 LLM</h2>
+    <p>MyProxy 是一个高性能的 LLM API 网关，支持 OpenAI、Anthropic Claude、Google Gemini 等主流协议，提供统一的管理界面和请求监控。</p>
+    <a href="/download" class="btn-download" id="downloadBtn">
+      <span class="btn-icon">⬇</span>
+      <span class="btn-text">
+        <span class="btn-title">下载最新版</span>
+        <span class="btn-desc">Linux amd64 · qwenportal_linux</span>
+      </span>
+    </a>
+    <p class="version-info" id="versionInfo">获取版本信息中...</p>
+  </section>
+
+  <section class="features">
+    <h2>核心功能</h2>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-icon">🔀</div>
+        <h3>多协议支持</h3>
+        <p>OpenAI、Anthropic Claude、Google Gemini 统一接入，自动协议转换</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📊</div>
+        <h3>请求监控</h3>
+        <p>实时统计 Token 用量、延迟分布、错误率，支持可视化图表</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <h3>流式响应</h3>
+        <p>完整 SSE 流式传输支持，首 Token 延迟极低</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔌</div>
+        <h3>即插即用</h3>
+        <p>兼容 OpenAI SDK，一行代码切换，无需修改现有应用</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔑</div>
+        <h3>安全管理</h3>
+        <p>API Key 管理、Provider 配置加密、访问控制</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🖥</div>
+        <h3>管理后台</h3>
+        <p>Web 管理界面，Provider 管理、模型测试、日志查询</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="usage">
+    <h2>快速开始</h2>
+    <div class="step">
+      <span class="step-num">1</span>
+      <div>
+        <h3>下载二进制</h3>
+        <p>下载 <code>qwenportal_linux</code> 并赋予执行权限。</p>
+        <pre><code>wget https://my-proxy.pages.dev/download
+chmod +x qwenportal_linux</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <span class="step-num">2</span>
+      <div>
+        <h3>准备配置文件</h3>
+        <p>创建 <code>config.yaml</code>：</p>
+        <pre><code>server:
+  host: "0.0.0.0"
+  port: 8080
+database:
+  path: "data/qwenportal.db"
+webui:
+  enabled: true
+  python: "python3"
+  port: 0
+logging:
+  level: "info"</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <span class="step-num">3</span>
+      <div>
+        <h3>启动服务</h3>
+        <pre><code>./qwenportal_linux</code></pre>
+        <p>首次启动会自动生成 admin key（打印在控制台），访问 <code>http://服务器IP:8080/admin/dashboard</code> 进入管理后台。</p>
+      </div>
+    </div>
+    <div class="step">
+      <span class="step-num">4</span>
+      <div>
+        <h3>添加 Provider</h3>
+        <p>通过管理后台添加 LLM Provider，或使用 API：</p>
+        <pre><code>curl -X POST http://localhost:8080/admin/api/providers \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "MyProvider",
+    "provider_type": "openai",
+    "base_url": "https://api.example.com/v1",
+    "api_key": "sk-xxx",
+    "models": ["gpt-4", "gpt-3.5-turbo"],
+    "is_active": true
+  }'</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="api-ref">
+    <h2>API 概览</h2>
+    <table>
+      <tr><th>Endpoint</th><th>方法</th><th>说明</th></tr>
+      <tr><td><code>/v1/models</code></td><td>GET</td><td>列出所有可用模型</td></tr>
+      <tr><td><code>/v1/chat/completions</code></td><td>POST</td><td>聊天补全（支持 SSE 流式）</td></tr>
+      <tr><td><code>/v1/embeddings</code></td><td>POST</td><td>向量嵌入</td></tr>
+      <tr><td><code>/v1/messages</code></td><td>POST</td><td>Anthropic Claude 兼容</td></tr>
+      <tr><td><code>/admin/api/providers</code></td><td>GET/POST</td><td>Provider 管理</td></tr>
+      <tr><td><code>/admin/api/keys</code></td><td>GET/POST</td><td>API Key 管理</td></tr>
+      <tr><td><code>/admin/api/stats</code></td><td>GET</td><td>请求统计</td></tr>
+    </table>
+  </section>
+</main>
+
+<footer>
+  <div class="container">
+    <p>MyProxy &copy; 2026 &middot; <a href="https://github.com/wesele/MyProxy">GitHub</a></p>
+  </div>
+</footer>
+
+<script src="/script.js"></script>
+</body>
+</html>

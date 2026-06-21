@@ -1,0 +1,33 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Build Linux binary
+        run: GOOS=linux GOARCH=amd64 go build -o qwenportal_linux ./cmd/qwenportal/
+
+      - name: Create or Update Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: deploy-latest
+          files: qwenportal_linux
+          body: |
+            ## Auto Deployment Build
+            - Run: ${{ github.run_id }}
+            - Commit: ${{ github.sha }}
+            - Trigger: ${{ github.event_name }}
+          make_latest: true
+          generate_release_notes: false
+          fail_on_unmatched_files: false
