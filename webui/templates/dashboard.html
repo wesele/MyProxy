@@ -223,10 +223,20 @@ function saveDashboardState() {
     } else {
         localStorage.removeItem('dashboard_model');
     }
-    const startVal = document.getElementById('start-time').value;
-    const endVal = document.getElementById('end-time').value;
-    if (startVal) localStorage.setItem('dashboard_start', startVal);
-    if (endVal) localStorage.setItem('dashboard_end', endVal);
+    // Only persist start/end when the user has manually edited the date
+    // inputs. Otherwise we rely on the hours dropdown so that a page refresh
+    // does not pick up stale values from the right-side inputs.
+    if (datesEdited) {
+        const startVal = document.getElementById('start-time').value;
+        const endVal = document.getElementById('end-time').value;
+        if (startVal) localStorage.setItem('dashboard_start', startVal);
+        else localStorage.removeItem('dashboard_start');
+        if (endVal) localStorage.setItem('dashboard_end', endVal);
+        else localStorage.removeItem('dashboard_end');
+    } else {
+        localStorage.removeItem('dashboard_start');
+        localStorage.removeItem('dashboard_end');
+    }
 }
 
 function fmtLocal(d) {
@@ -264,8 +274,10 @@ function loadStats() {
     const startInput = document.getElementById('start-time').value;
     const endInput = document.getElementById('end-time').value;
     let url = `/admin/api/stats?hours=${hours}`;
-    if (startInput) url += `&start=${new Date(startInput).toISOString()}`;
-    if (endInput) url += `&end=${new Date(endInput).toISOString()}`;
+    if (datesEdited) {
+        if (startInput) url += `&start=${new Date(startInput).toISOString()}`;
+        if (endInput) url += `&end=${new Date(endInput).toISOString()}`;
+    }
     if (model) url += `&model=${encodeURIComponent(model)}`;
 
     fetch(url)
@@ -381,8 +393,10 @@ function loadModelLogs(model) {
     const startInput = document.getElementById('start-time').value;
     const endInput = document.getElementById('end-time').value;
     let url = `/admin/api/logs?model=${encodeURIComponent(model)}&hours=${hours}&limit=100`;
-    if (startInput) url += `&start=${new Date(startInput).toISOString()}`;
-    if (endInput) url += `&end=${new Date(endInput).toISOString()}`;
+    if (datesEdited) {
+        if (startInput) url += `&start=${new Date(startInput).toISOString()}`;
+        if (endInput) url += `&end=${new Date(endInput).toISOString()}`;
+    }
 
     fetch(url)
         .then(r => r.json())
@@ -611,15 +625,22 @@ function toggleAutoRefresh() {
         localStorage.setItem('dashboard_auto_refresh', '0');
     }
 }
-// Restore preferences from localStorage
+// Restore preferences from localStorage. Start/end are only persisted when
+// the user has manually edited the date inputs, so their presence is a
+// reliable signal that we should keep using them; otherwise we follow the
+// hours dropdown and let auto-refresh keep the range current.
 const savedHours = localStorage.getItem('dashboard_hours');
 if (savedHours) document.getElementById('hours-select').value = savedHours;
 const savedStart = localStorage.getItem('dashboard_start');
 const savedEnd = localStorage.getItem('dashboard_end');
-if (savedStart) document.getElementById('start-time').value = savedStart;
-if (savedEnd) document.getElementById('end-time').value = savedEnd;
-if (!savedStart) initDateInputs();
-if (savedStart && savedHours) datesEdited = true;
+if (savedStart && savedEnd) {
+    document.getElementById('start-time').value = savedStart;
+    document.getElementById('end-time').value = savedEnd;
+    datesEdited = true;
+} else {
+    initDateInputs();
+    datesEdited = false;
+}
 const savedModel = localStorage.getItem('dashboard_model');
 if (savedModel) {
     selectedModel = savedModel;
