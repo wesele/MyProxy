@@ -10,12 +10,12 @@ import (
 
 func (s *SQLiteStore) InsertRequestLog(log *models.RequestLog) error {
 	_, err := s.db.Exec(`INSERT INTO request_logs
-		(request_id, api_key_id, provider_id, model, request_type,
+		(request_id, api_key_id, api_key_name, provider_id, model, request_type,
 		 prompt_tokens, completion_tokens, input_cache_tokens,
 		 latency_ms, status_code, is_error,
 		 request_summary, response_summary, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		log.RequestID, log.ApiKeyID, log.ProviderID, log.Model, log.RequestType,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		log.RequestID, log.ApiKeyID, log.ApiKeyName, log.ProviderID, log.Model, log.RequestType,
 		log.PromptTokens, log.CompletionTokens, log.InputCacheTokens,
 		log.LatencyMs, log.StatusCode, log.IsError,
 		log.RequestSummary, log.ResponseSummary,
@@ -228,7 +228,7 @@ func (s *SQLiteStore) GetModelLogs(model string, start, end time.Time, limit int
 		rl.latency_ms, rl.status_code, rl.is_error,
 		COALESCE(rl.request_summary, ''), COALESCE(rl.response_summary, ''),
 		rl.created_at,
-		COALESCE(ak.name, '') as api_key_name
+		COALESCE(NULLIF(rl.api_key_name, ''), ak.name, '') as api_key_name
 		FROM request_logs rl
 		LEFT JOIN api_keys ak ON rl.api_key_id = ak.id
 		WHERE rl.created_at >= ? AND rl.created_at <= ? AND rl.model = ?

@@ -98,6 +98,7 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE request_logs ADD COLUMN input_cache_tokens INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE request_logs ADD COLUMN request_summary TEXT DEFAULT ''`,
 		`ALTER TABLE request_logs ADD COLUMN response_summary TEXT DEFAULT ''`,
+		`ALTER TABLE request_logs ADD COLUMN api_key_name TEXT DEFAULT ''`,
 	}
 	for _, stmt := range alterStmts {
 		s.db.Exec(stmt)

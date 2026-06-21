@@ -683,6 +683,85 @@ func TestRequestLogs(t *testing.T) {
 		}
 	})
 
+	t.Run("GetModelLogs/api_key_name", func(t *testing.T) {
+		store := newTestStore(t)
+		key, err := store.CreateApiKey("my-test-token", 0)
+		if err != nil {
+			t.Fatalf("CreateApiKey() error = %v", err)
+		}
+
+		store.InsertRequestLog(&models.RequestLog{
+			RequestID:   "log-with-key",
+			Model:       "gpt-4",
+			RequestType: "chat",
+			PromptTokens: 10, CompletionTokens: 20,
+			LatencyMs: 100, StatusCode: 200,
+			ApiKeyID:   &key.ID,
+			ApiKeyName: key.Name,
+			CreatedAt:  now,
+		})
+		store.InsertRequestLog(&models.RequestLog{
+			RequestID:        "log-without-key",
+			Model:            "gpt-4",
+			RequestType:      "chat",
+			PromptTokens:     5,
+			CompletionTokens: 10,
+			LatencyMs:        50,
+			StatusCode:       200,
+			CreatedAt:        now,
+		})
+
+		logs, err := store.GetModelLogs("gpt-4", windowStart, windowEnd, 10)
+		if err != nil {
+			t.Fatalf("GetModelLogs() error = %v", err)
+		}
+		if len(logs) != 2 {
+			t.Fatalf("expected 2 logs, got %d", len(logs))
+		}
+
+		for _, l := range logs {
+			if l.RequestID == "log-with-key" {
+				if l.ApiKeyName != "my-test-token" {
+					t.Errorf("ApiKeyName = %q, want %q", l.ApiKeyName, "my-test-token")
+				}
+			}
+		}
+	})
+
+	t.Run("GetModelLogs/api_key_name/survives_key_deletion", func(t *testing.T) {
+		store := newTestStore(t)
+		key, err := store.CreateApiKey("deleted-token", 0)
+		if err != nil {
+			t.Fatalf("CreateApiKey() error = %v", err)
+		}
+
+		store.InsertRequestLog(&models.RequestLog{
+			RequestID:   "log-deleted-key",
+			Model:       "gpt-4",
+			RequestType: "chat",
+			PromptTokens: 10, CompletionTokens: 20,
+			LatencyMs: 100, StatusCode: 200,
+			ApiKeyID:   &key.ID,
+			ApiKeyName: key.Name,
+			CreatedAt:  now,
+		})
+
+		if err := store.DeleteApiKey(key.ID); err != nil {
+			t.Fatalf("DeleteApiKey() error = %v", err)
+		}
+
+		logs, err := store.GetModelLogs("gpt-4", windowStart, windowEnd, 10)
+		if err != nil {
+			t.Fatalf("GetModelLogs() error = %v", err)
+		}
+		if len(logs) != 1 {
+			t.Fatalf("expected 1 log, got %d", len(logs))
+		}
+		if logs[0].ApiKeyName != "deleted-token" {
+			t.Errorf("ApiKeyName = %q, want %q (should survive key deletion)", logs[0].ApiKeyName, "deleted-token")
+		}
+	})
+
 	t.Run("GetModelLogs/with limit", func(t *testing.T) {
 		store := newTestStore(t)
 		for i := 0; i < 5; i++ {

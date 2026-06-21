@@ -104,6 +104,7 @@ func RequestLogger(logger *zap.Logger, store db.Store) gin.HandlerFunc {
 			if apiKey, exists := c.Get("api_key"); exists {
 				if ak, ok := apiKey.(*models.ApiKey); ok {
 					reqLog.ApiKeyID = &ak.ID
+					reqLog.ApiKeyName = ak.Name
 				}
 			}
 			if providerID, exists := c.Get("provider_id"); exists {
