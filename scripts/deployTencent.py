@@ -56,6 +56,11 @@ def ssh_run_bg(client, cmd):
     chan.close()
 
 
+def _curl(client, api_key, path, extra=""):
+    auth = f' -H "Authorization: Bearer {api_key.strip()}"' if api_key else ""
+    return ssh_run(client, f"curl -sk{auth} https://127.0.0.1:8080{path} {extra}", timeout=10)
+
+
 def kill_port_8080(client):
     for attempt in range(8):
         ssh_run(client, "pkill -9 -f qwenportal_linux 2>/dev/null", timeout=5)
@@ -165,11 +170,17 @@ def deploy():
         if not started:
             msg("WARNING: 进程启动检测超时")
 
+        # 读取 admin key
+        ec, admin_key, _ = ssh_run(client, f"cat {REMOTE_DIR}/data/admin_key.txt 2>/dev/null", timeout=5)
+        if admin_key:
+            msg(f"Admin key: {admin_key[:20]}...")
+        AK = admin_key.strip() if admin_key else ""
+
         print("\n[5/6] 等待服务就绪...")
         ready = False
         for i in range(30):
-            ec, out, _ = ssh_run(client, "curl -sf http://127.0.0.1:8080/v1/models 2>&1", timeout=5)
-            if ec == 0 and '"object"' in out:
+            ec, out, _ = _curl(client, AK, "/v1/models", "2>&1 || echo EMPTY")
+            if '"object"' in out:
                 msg(f"服务就绪 (第 {i+1} 次尝试)")
                 ready = True
                 break
@@ -186,16 +197,12 @@ def deploy():
 
         if not SKIP_PROVIDER:
             print("\n[6/6] 配置 Provider...")
-            ec, admin_key, _ = ssh_run(client, f"cat {REMOTE_DIR}/data/admin_key.txt 2>/dev/null", timeout=5)
-            if admin_key:
-                msg(f"Admin key: {admin_key[:20]}...")
-            ec, out, _ = ssh_run(client, "curl -sf http://127.0.0.1:8080/admin/api/providers 2>/dev/null || echo []", timeout=10)
+            ec, out, _ = _curl(client, AK, "/admin/api/providers", "2>/dev/null || echo []")
             try:
                 providers = json.loads(out)
                 for p in providers:
                     if p.get("name") == PROVIDER_NAME:
-                        pid = p.get("id")
-                        ssh_run(client, f"curl -sf -X DELETE http://127.0.0.1:8080/admin/api/providers/{pid}", timeout=5)
+                        _curl(client, AK, f"/admin/api/providers/{p['id']}", "-X DELETE 2>/dev/null")
             except Exception:
                 pass
             provider = {"name": PROVIDER_NAME, "provider_type": "openai", "base_url": PROVIDER_URL, "api_key": PROVIDER_KEY, "models": PROVIDER_MODELS, "is_active": True}
@@ -203,15 +210,15 @@ def deploy():
             with sftp.open("/tmp/provider.json", "w") as f:
                 f.write(json.dumps(provider))
             sftp.close()
-            ec, out, err = ssh_run(client, "curl -sf -X POST http://127.0.0.1:8080/admin/api/providers -H 'Content-Type: application/json' -d @/tmp/provider.json", timeout=10)
+            ec, out, err = _curl(client, AK, "/admin/api/providers", f"-X POST -H 'Content-Type: application/json' -d @/tmp/provider.json")
             if ec == 0 and out:
                 msg("Provider 创建成功")
             else:
                 msg(f"WARNING: Provider 创建失败 (exit={ec}): {err[:100]}")
 
         # Verify API
-        ec, out, _ = ssh_run(client, "curl -sf http://127.0.0.1:8080/v1/models", timeout=10)
-        deploy_ok = ec == 0 and '"object"' in out
+        ec, out, _ = _curl(client, AK, "/v1/models", "2>&1 || echo EMPTY")
+        deploy_ok = '"object"' in out
 
     except Exception as e:
         msg(f"异常: {e}")
