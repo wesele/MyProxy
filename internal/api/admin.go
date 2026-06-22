@@ -579,6 +579,21 @@ func (h *AdminHandler) UpdateProvider(c *gin.Context) {
 		p.APIKey = existing.APIKey
 	}
 
+	// Restore masked key values from existing keys
+	for i := range p.Keys {
+		if strings.Contains(p.Keys[i].KeyValue, "****") {
+			for _, ek := range existing.Keys {
+				if ek.ID == p.Keys[i].ID {
+					p.Keys[i].KeyValue = ek.KeyValue
+					break
+				}
+			}
+			if strings.Contains(p.Keys[i].KeyValue, "****") && p.APIKey != "" {
+				p.Keys[i].KeyValue = p.APIKey
+			}
+		}
+	}
+
 	if err := h.store.UpdateProvider(&p); err != nil {
 		h.logger.Error("update provider", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

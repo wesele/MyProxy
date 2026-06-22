@@ -617,7 +617,7 @@ let fetchedModelsList = [];
 function getProviderConfig() {
     return {
         base_url: document.getElementById('base_url').value,
-        api_key: document.getElementById('api_key').value,
+        api_key: keys.length > 0 ? keys[0].key_value : (document.getElementById('new-key-input') ? document.getElementById('new-key-input').value : ''),
         provider_type: document.getElementById('provider_type').value,
     };
 }
