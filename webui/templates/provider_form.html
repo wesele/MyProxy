@@ -376,14 +376,22 @@ function renderKeys() {
         toggleBtn.textContent = 'Show';
         toggleBtn.addEventListener('click', async function() {
             if (this.textContent === 'Show') {
-                if (k.id > 0 && k.key_value.includes('****')) {
+                if (k.key_value.includes('****')) {
                     this.textContent = '...';
                     this.disabled = true;
                     try {
-                        const resp = await fetch(`/admin/api/providers/{{ provider.id if provider else '0' }}/keys/${k.id}?show_key=1`);
-                        const data = await resp.json();
-                        if (data.key_value && !data.key_value.includes('****')) {
-                            k.key_value = data.key_value;
+                        let realKey = null;
+                        if (k.id > 0) {
+                            const resp = await fetch(`/admin/api/providers/{{ provider.id if provider else '0' }}/keys/${k.id}?show_key=1`);
+                            const data = await resp.json();
+                            if (data.key_value) realKey = data.key_value;
+                        } else {
+                            const resp = await fetch(`/admin/api/providers/{{ provider.id if provider else '0' }}/api-key`);
+                            const data = await resp.json();
+                            if (data.api_key) realKey = data.api_key;
+                        }
+                        if (realKey && !realKey.includes('****')) {
+                            k.key_value = realKey;
                         }
                     } catch(e) { console.error(e); }
                     this.disabled = false;
