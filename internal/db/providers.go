@@ -63,6 +63,14 @@ func (s *SQLiteStore) ListProviders() ([]models.Provider, error) {
 		p.Models = unmarshalModels(p.ModelsJSON)
 		providers = append(providers, p)
 	}
+	rows.Close()
+
+	for i := range providers {
+		providers[i].Keys, _ = s.ListProviderKeys(providers[i].ID)
+		if len(providers[i].Keys) > 0 {
+			providers[i].APIKey = providers[i].Keys[0].KeyValue
+		}
+	}
 	return providers, nil
 }
 
@@ -73,6 +81,10 @@ func (s *SQLiteStore) GetProvider(id int64) (*models.Provider, error) {
 		return nil, err
 	}
 	p.Models = unmarshalModels(p.ModelsJSON)
+	p.Keys, _ = s.ListProviderKeys(p.ID)
+	if len(p.Keys) > 0 {
+		p.APIKey = p.Keys[0].KeyValue
+	}
 	return &p, nil
 }
 
@@ -83,14 +95,52 @@ func (s *SQLiteStore) CreateProvider(p *models.Provider) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return result.LastInsertId()
+	id, _ := result.LastInsertId()
+
+	// If keys provided via Keys field, use those
+	if len(p.Keys) > 0 {
+		for _, k := range p.Keys {
+			if k.KeyValue != "" {
+				if _, err := s.CreateProviderKey(id, k.KeyValue); err != nil {
+					return 0, err
+				}
+			}
+		}
+	} else if p.APIKey != "" {
+		if _, err := s.CreateProviderKey(id, p.APIKey); err != nil {
+			return 0, err
+		}
+	}
+	return id, nil
 }
 
 func (s *SQLiteStore) UpdateProvider(p *models.Provider) error {
 	modelsJSON := marshalModels(p.Models)
 	_, err := s.db.Exec(`UPDATE providers SET name=?, provider_type=?, base_url=?, api_key=?, models_json=?, priority=?, updated_at=? WHERE id=?`,
 		p.Name, p.ProviderType, p.BaseURL, p.APIKey, modelsJSON, p.Priority, time.Now(), p.ID)
-	return err
+	if err != nil {
+		return err
+	}
+
+	if len(p.Keys) > 0 {
+		existing, _ := s.ListProviderKeys(p.ID)
+		existingMap := make(map[int64]bool)
+		for _, ek := range existing {
+			existingMap[ek.ID] = true
+		}
+		for _, k := range p.Keys {
+			if k.ID > 0 && existingMap[k.ID] {
+				s.UpdateProviderKey(k.ID, k.KeyValue, k.IsActive)
+				delete(existingMap, k.ID)
+			} else if k.KeyValue != "" {
+				s.CreateProviderKey(p.ID, k.KeyValue)
+			}
+		}
+		for id := range existingMap {
+			s.DeleteProviderKey(id)
+		}
+	}
+	return nil
 }
 
 func (s *SQLiteStore) DeleteProvider(id int64) error {
@@ -105,6 +155,10 @@ func (s *SQLiteStore) FindProviderByName(name string) (*models.Provider, error) 
 		return nil, err
 	}
 	p.Models = unmarshalModels(p.ModelsJSON)
+	p.Keys, _ = s.ListProviderKeys(p.ID)
+	if len(p.Keys) > 0 {
+		p.APIKey = p.Keys[0].KeyValue
+	}
 	return &p, nil
 }
 

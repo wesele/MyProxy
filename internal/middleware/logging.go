@@ -85,35 +85,40 @@ func RequestLogger(logger *zap.Logger, store db.Store) gin.HandlerFunc {
 			zap.Int("input_cache_tokens", inputCacheTokens),
 		)
 
-		go func() {
-			reqLog := &models.RequestLog{
-				RequestID:        entry.RequestID,
-				Model:            entry.Model,
-				RequestType:      entry.RequestType,
-				PromptTokens:     promptTokens,
-				CompletionTokens: completionTokens,
-				InputCacheTokens: inputCacheTokens,
-				LatencyMs:        elapsed.Milliseconds(),
-				StatusCode:       statusCode,
-				IsError:          statusCode >= 400,
-				RequestSummary:   requestSummary,
-				ResponseSummary:  responseSummary,
-				CreatedAt:        time.Now(),
-			}
+	go func() {
+		reqLog := &models.RequestLog{
+			RequestID:        entry.RequestID,
+			Model:            entry.Model,
+			RequestType:      entry.RequestType,
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			InputCacheTokens: inputCacheTokens,
+			LatencyMs:        elapsed.Milliseconds(),
+			StatusCode:       statusCode,
+			IsError:          statusCode >= 400,
+			RequestSummary:   requestSummary,
+			ResponseSummary:  responseSummary,
+			CreatedAt:        time.Now(),
+		}
 
-			if apiKey, exists := c.Get("api_key"); exists {
-				if ak, ok := apiKey.(*models.ApiKey); ok {
-					reqLog.ApiKeyID = &ak.ID
-					reqLog.ApiKeyName = ak.Name
-				}
+		if apiKey, exists := c.Get("api_key"); exists {
+			if ak, ok := apiKey.(*models.ApiKey); ok {
+				reqLog.ApiKeyID = &ak.ID
+				reqLog.ApiKeyName = ak.Name
 			}
-			if providerID, exists := c.Get("provider_id"); exists {
-				if pid, ok := providerID.(int64); ok {
-					reqLog.ProviderID = &pid
-				}
+		}
+		if providerID, exists := c.Get("provider_id"); exists {
+			if pid, ok := providerID.(int64); ok {
+				reqLog.ProviderID = &pid
 			}
+		}
+		if keyIdx, exists := c.Get("provider_key_index"); exists {
+			if ki, ok := keyIdx.(int); ok {
+				reqLog.ProviderKeyIndex = ki
+			}
+		}
 
-			store.InsertRequestLog(reqLog)
-		}()
+		store.InsertRequestLog(reqLog)
+	}()
 	}
 }

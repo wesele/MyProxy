@@ -60,6 +60,14 @@ func (s *SQLiteStore) migrate() error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS provider_keys (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			provider_id INTEGER NOT NULL,
+			key_value TEXT NOT NULL,
+			is_active INTEGER NOT NULL DEFAULT 1,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
+		)`,
 		`CREATE TABLE IF NOT EXISTS api_keys (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
@@ -99,6 +107,7 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE request_logs ADD COLUMN request_summary TEXT DEFAULT ''`,
 		`ALTER TABLE request_logs ADD COLUMN response_summary TEXT DEFAULT ''`,
 		`ALTER TABLE request_logs ADD COLUMN api_key_name TEXT DEFAULT ''`,
+		`ALTER TABLE request_logs ADD COLUMN provider_key_index INTEGER NOT NULL DEFAULT 0`,
 	}
 	for _, stmt := range alterStmts {
 		s.db.Exec(stmt)

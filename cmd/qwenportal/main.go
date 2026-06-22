@@ -97,7 +97,7 @@ func main() {
 	r.POST("/admin/api/logout", loginHandler.Logout)
 	r.GET("/admin/api/session", loginHandler.CheckSession)
 
-	adminAPI := r.Group("/admin/api", loginRequired, middleware.AdminAuth(store))
+	adminAPI := r.Group("/admin/api", loginRequired, middleware.AdminAuth(store, authManager))
 	{
 		adminAPI.GET("/providers", adminHandler.ListProviders)
 		adminAPI.POST("/providers", adminHandler.CreateProvider)
@@ -106,6 +106,12 @@ func main() {
 		adminAPI.DELETE("/providers/:id", adminHandler.DeleteProvider)
 		adminAPI.GET("/providers/export", adminHandler.ExportProviders)
 		adminAPI.POST("/providers/import", adminHandler.ImportProviders)
+
+		adminAPI.GET("/providers/:id/keys", adminHandler.ListProviderKeys)
+		adminAPI.GET("/providers/:id/keys/:keyId", adminHandler.GetProviderKey)
+		adminAPI.POST("/providers/:id/keys", adminHandler.CreateProviderKey)
+		adminAPI.PUT("/providers/:id/keys/:keyId", adminHandler.UpdateProviderKey)
+		adminAPI.DELETE("/providers/:id/keys/:keyId", adminHandler.DeleteProviderKey)
 
 		adminAPI.GET("/keys", adminHandler.ListApiKeys)
 		adminAPI.POST("/keys", adminHandler.CreateApiKey)

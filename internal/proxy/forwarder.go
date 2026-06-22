@@ -214,101 +214,124 @@ func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path stri
 		body = MergeExtraBody(body, mc.ExtraBody)
 	}
 
+	// Build key selector
+	selector := NewKeySelector(provider.Keys)
+	if selector.Len() == 0 && provider.APIKey != "" {
+		// Fallback: use APIKey directly if no Keys configured
+		selector = NewKeySelector([]models.ProviderKey{{KeyValue: provider.APIKey, IsActive: true}})
+	}
+
 	targetURL := strings.TrimRight(provider.BaseURL, "/") + path
 
-	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, targetURL, bytes.NewReader(body))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create request"})
-		return
-	}
+	for {
+		req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, targetURL, bytes.NewReader(body))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create request"})
+			return
+		}
 
-	if provider.ProviderType == "anthropic" {
-		req.Header.Set("x-api-key", provider.APIKey)
-		req.Header.Set("anthropic-version", "2023-06-01")
-	} else if provider.ProviderType == "gemini" {
-		// Gemini uses API key as query param, handled in gemini.go
-	} else {
-		req.Header.Set("Authorization", "Bearer "+provider.APIKey)
-	}
-	req.Header.Set("Content-Type", "application/json")
+		if provider.ProviderType == "anthropic" {
+			req.Header.Set("x-api-key", selector.Current())
+			req.Header.Set("anthropic-version", "2023-06-01")
+		} else if provider.ProviderType == "gemini" {
+			// Gemini uses API key as query param, handled in gemini.go
+		} else {
+			req.Header.Set("Authorization", "Bearer "+selector.Current())
+		}
+		req.Header.Set("Content-Type", "application/json")
 
-	for k := range c.Request.Header {
-		if k == "Authorization" || k == "Content-Type" {
+		for k := range c.Request.Header {
+			if k == "Authorization" || k == "Content-Type" {
+				continue
+			}
+			req.Header.Set(k, c.Request.Header.Get(k))
+		}
+
+		resp, err := f.client.Do(req)
+		if err != nil {
+			f.logger.Error("upstream request failed", zap.Error(err))
+			c.JSON(http.StatusBadGateway, gin.H{"error": "upstream request failed: " + err.Error()})
+			return
+		}
+
+		if resp.StatusCode == 429 && selector.HasNext() {
+			keyIdx := selector.Index()
+			resp.Body.Close()
+			f.logger.Warn("rate limited (429), switching to next key",
+				zap.Int("from_key_index", keyIdx),
+				zap.Int("to_key_index", keyIdx+1),
+			)
+			selector.Next()
 			continue
 		}
-		req.Header.Set(k, c.Request.Header.Get(k))
-	}
 
-	resp, err := f.client.Do(req)
-	if err != nil {
-		f.logger.Error("upstream request failed", zap.Error(err))
-		c.JSON(http.StatusBadGateway, gin.H{"error": "upstream request failed: " + err.Error()})
-		return
-	}
-	defer resp.Body.Close()
+		c.Set("provider_key_index", selector.Index())
+		defer resp.Body.Close()
 
-	for k, v := range resp.Header {
-		for _, vv := range v {
-			c.Header(k, vv)
+		for k, v := range resp.Header {
+			for _, vv := range v {
+				c.Header(k, vv)
+			}
 		}
-	}
 
-	if isStream || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
-		c.Set("proxy_streaming", true)
-		c.Writer.WriteHeader(resp.StatusCode)
-		sw := &sseWriter{writer: c.Writer, buf: make([]byte, 0, 4096)}
-		flusher, canFlush := c.Writer.(http.Flusher)
-		buf := make([]byte, 4096)
-		for {
-			n, err := resp.Body.Read(buf)
-			if n > 0 {
-				sw.Write(buf[:n])
-				if canFlush {
-					flusher.Flush()
+		if isStream || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+			c.Set("proxy_streaming", true)
+			c.Writer.WriteHeader(resp.StatusCode)
+			sw := &sseWriter{writer: c.Writer, buf: make([]byte, 0, 4096)}
+			flusher, canFlush := c.Writer.(http.Flusher)
+			buf := make([]byte, 4096)
+			for {
+				n, err := resp.Body.Read(buf)
+				if n > 0 {
+					sw.Write(buf[:n])
+					if canFlush {
+						flusher.Flush()
+					}
+				}
+				if err != nil {
+					break
 				}
 			}
-			if err != nil {
-				break
+			pt, ct, ict := ParseTokens(sw.lastUsage)
+			if pt+ct+ict == 0 {
+				pt = estimatePromptTokens(body)
 			}
+			if ct == 0 && sw.content.Len() > 0 {
+				ct = sw.content.Len() / 4
+			}
+			if pt+ct+ict > 0 {
+				c.Set("proxy_prompt_tokens", pt)
+				c.Set("proxy_completion_tokens", ct)
+				c.Set("proxy_input_cache_tokens", ict)
+			}
+			return
 		}
-		pt, ct, ict := ParseTokens(sw.lastUsage)
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
+			return
+		}
+
+		pt, ct, ict := ParseTokens(respBody)
 		if pt+ct+ict == 0 {
 			pt = estimatePromptTokens(body)
-		}
-		if ct == 0 && sw.content.Len() > 0 {
-			ct = sw.content.Len() / 4
+			if ct == 0 {
+				ct = estimateCompletionTokens(respBody)
+			}
 		}
 		if pt+ct+ict > 0 {
 			c.Set("proxy_prompt_tokens", pt)
 			c.Set("proxy_completion_tokens", ct)
 			c.Set("proxy_input_cache_tokens", ict)
 		}
+
+		// Store response summary
+		c.Set("response_summary", ExtractResponseSummary(respBody))
+
+		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
 		return
 	}
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-		return
-	}
-
-	pt, ct, ict := ParseTokens(respBody)
-	if pt+ct+ict == 0 {
-		pt = estimatePromptTokens(body)
-		if ct == 0 {
-			ct = estimateCompletionTokens(respBody)
-		}
-	}
-	if pt+ct+ict > 0 {
-		c.Set("proxy_prompt_tokens", pt)
-		c.Set("proxy_completion_tokens", ct)
-		c.Set("proxy_input_cache_tokens", ict)
-	}
-
-	// Store response summary
-	c.Set("response_summary", ExtractResponseSummary(respBody))
-
-	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
 }
 
 type openAIUsageDetails struct {

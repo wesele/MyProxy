@@ -19,6 +19,14 @@ type ModelConfig struct {
 	InputCachePrice float64                `json:"input_cache_price,omitempty"`
 }
 
+type ProviderKey struct {
+	ID         int64     `json:"id"`
+	ProviderID int64     `json:"provider_id"`
+	KeyValue   string    `json:"key_value,omitempty"`
+	IsActive   bool      `json:"is_active"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 func generateModelID() string {
 	b := make([]byte, 6)
 	rand.Read(b)
@@ -42,6 +50,7 @@ type Provider struct {
 	ProviderType string        `json:"provider_type"`
 	BaseURL      string        `json:"base_url"`
 	APIKey       string        `json:"api_key,omitempty"`
+	Keys         []ProviderKey `json:"keys,omitempty"`
 	ModelsJSON   string        `json:"-"`
 	Models       []ModelConfig `json:"models"`
 	Priority     int           `json:"priority"`

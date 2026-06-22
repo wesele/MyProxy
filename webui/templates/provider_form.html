@@ -26,11 +26,15 @@
                             <input type="url" name="base_url" id="base_url" value="{{ provider.base_url if provider else '' }}" required placeholder="https://qwen.aikit.club/v1">
                         </div>
 <div class="form-group">
-<label>API Key</label>
-<div style="display:flex;gap:8px;align-items:center">
-<input type="password" name="api_key" id="api_key" value="{{ provider.api_key if provider else '' }}" placeholder="sk-..." {{ 'required' if not provider }} style="flex:1">
-<button type="button" id="toggle-key-btn" class="btn btn-sm" style="background:#eee;white-space:nowrap" {% if not provider %}title="Type a key first"{% endif %}>Show</button>
+<label>API Keys</label>
+<div id="keys-container">
+  <div id="keys-list" style="margin-bottom:8px;display:flex;flex-direction:column;gap:4px"></div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <input type="password" id="new-key-input" placeholder="sk-..." style="flex:1;padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px">
+    <button type="button" class="btn btn-sm" style="background:#4361ee;color:#fff;white-space:nowrap" onclick="addKey()">Add Key</button>
+  </div>
 </div>
+<input type="hidden" name="keys_json" id="keys_json" value="[]">
 </div>
                         <div class="form-group">
                             <label>Priority (lower = higher priority)</label>
@@ -328,6 +332,7 @@
 <script>
 let models = [];
 let selectedModelId = null;
+let keys = [];
 
 function genId() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -341,8 +346,98 @@ function initFromProvider() {
         if (!m.display_name) m.display_name = m.name;
     });
     {% endif %}
+    {% if provider and provider.keys %}
+    keys = {{ provider.keys | tojson }};
+    {% elif provider and provider.api_key %}
+    keys = [{id: 0, key_value: '{{ provider.api_key }}', is_active: true}];
+    {% endif %}
     renderModelsLeft();
     syncModelsJSON();
+    renderKeys();
+    syncKeysJSON();
+}
+
+// ======== Keys Management ========
+function renderKeys() {
+    const container = document.getElementById('keys-list');
+    container.innerHTML = '';
+    keys.forEach((k, idx) => {
+        const div = document.createElement('div');
+        div.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid #e0e0e0;border-radius:6px;background:#fafafa';
+        
+        const valSpan = document.createElement('span');
+        valSpan.style.cssText = 'flex:1;font-family:monospace;font-size:13px;color:#333';
+        valSpan.textContent = maskKey(k.key_value);
+        
+        const toggleBtn = document.createElement('button');
+        toggleBtn.type = 'button';
+        toggleBtn.className = 'btn btn-sm';
+        toggleBtn.style.cssText = 'background:#eee;white-space:nowrap';
+        toggleBtn.textContent = 'Show';
+        toggleBtn.addEventListener('click', async function() {
+            if (this.textContent === 'Show') {
+                if (k.id > 0 && k.key_value.includes('****')) {
+                    this.textContent = '...';
+                    this.disabled = true;
+                    try {
+                        const resp = await fetch(`/admin/api/providers/{{ provider.id if provider else '0' }}/keys/${k.id}?show_key=1`);
+                        const data = await resp.json();
+                        if (data.key_value && !data.key_value.includes('****')) {
+                            k.key_value = data.key_value;
+                        }
+                    } catch(e) { console.error(e); }
+                    this.disabled = false;
+                }
+                valSpan.textContent = k.key_value;
+                this.textContent = 'Hide';
+            } else {
+                valSpan.textContent = maskKey(k.key_value);
+                this.textContent = 'Show';
+            }
+        });
+        
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.innerHTML = '&times;';
+        delBtn.style.cssText = 'font-size:18px;color:#999;background:none;border:none;cursor:pointer;padding:0 4px;line-height:1';
+        delBtn.title = 'Delete key';
+        delBtn.addEventListener('click', () => deleteKey(idx));
+        
+        div.appendChild(valSpan);
+        div.appendChild(toggleBtn);
+        div.appendChild(delBtn);
+        container.appendChild(div);
+    });
+}
+
+function maskKey(key) {
+    if (!key || key.length <= 8) return '****';
+    return key.slice(0, 4) + '****' + key.slice(-4);
+}
+
+function addKey() {
+    const input = document.getElementById('new-key-input');
+    const val = input.value.trim();
+    if (!val) return;
+    keys.push({id: 0, key_value: val, is_active: true});
+    input.value = '';
+    renderKeys();
+    syncKeysJSON();
+}
+
+function deleteKey(idx) {
+    keys.splice(idx, 1);
+    renderKeys();
+    syncKeysJSON();
+}
+
+function syncKeysJSON() {
+    const out = keys.map(k => ({
+        id: k.id || 0,
+        key_value: k.key_value,
+        is_active: k.is_active !== false,
+    }));
+    document.getElementById('keys_json').value = JSON.stringify(out);
 }
 
 // ======== Left Panel: Model List ========
@@ -462,7 +557,7 @@ function saveCurrentModelConfig() {
 }
 
 document.getElementById('provider-form').addEventListener('submit', function(e) {
-    // Validate all models — check textarea for the currently selected one
+    // Validate all models
     for (const m of models) {
         let raw = m.extra_body;
         if (m.id === selectedModelId) {
@@ -481,6 +576,7 @@ document.getElementById('provider-form').addEventListener('submit', function(e) 
         }
     }
     syncModelsJSON();
+    syncKeysJSON();
 });
 
 document.addEventListener('input', function(e) {
@@ -649,53 +745,5 @@ window.addEventListener('click', function(e) {
 });
 
 document.addEventListener('DOMContentLoaded', initFromProvider);
-
-const toggleKeyBtn = document.getElementById('toggle-key-btn');
-const apiKeyInput = document.getElementById('api_key');
-if (toggleKeyBtn && apiKeyInput) {
-toggleKeyBtn.addEventListener('click', async function() {
-  if (toggleKeyBtn.dataset.loading === '1') return;
-
-  if (toggleKeyBtn.textContent.trim() === 'Show') {
-    toggleKeyBtn.textContent = 'Loading...';
-    toggleKeyBtn.disabled = true;
-    toggleKeyBtn.dataset.loading = '1';
-
-    const providerId = {{ provider.id if provider else 'null' }};
-    if (!providerId) {
-      toggleKeyBtn.textContent = 'Show';
-      toggleKeyBtn.disabled = false;
-      toggleKeyBtn.dataset.loading = '0';
-      const raw = prompt('Paste the full API key here:');
-      if (raw !== null && raw.trim()) {
-        apiKeyInput.value = raw.trim();
-        apiKeyInput.type = 'text';
-        toggleKeyBtn.textContent = 'Hide';
-        toggleKeyBtn.disabled = false;
-      }
-      return;
-    }
-
-    try {
-      const resp = await fetch(`/admin/api/providers/${providerId}/api-key`);
-      const data = await resp.json();
-      if (data.api_key && !data.api_key.includes('****')) {
-        apiKeyInput.value = data.api_key;
-        apiKeyInput.type = 'text';
-        toggleKeyBtn.textContent = 'Hide';
-      }
-    } catch (err) {
-      console.error('Failed to load API key:', err);
-      toggleKeyBtn.textContent = 'Show';
-    } finally {
-      toggleKeyBtn.disabled = false;
-      toggleKeyBtn.dataset.loading = '0';
-    }
-  } else {
-    apiKeyInput.type = 'password';
-    toggleKeyBtn.textContent = 'Show';
-  }
-});
-}
 </script>
 {% endblock %}

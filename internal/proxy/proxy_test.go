@@ -40,6 +40,10 @@ func (m *mockStore) UpdateProvider(p *models.Provider) error              { retu
 func (m *mockStore) DeleteProvider(id int64) error                        { return nil }
 func (m *mockStore) FindProviderByName(name string) (*models.Provider, error) { return nil, nil }
 func (m *mockStore) GetProviderByModel(model string) (*models.Provider, error) { return nil, nil }
+func (m *mockStore) ListProviderKeys(providerID int64) ([]models.ProviderKey, error) { return nil, nil }
+func (m *mockStore) CreateProviderKey(providerID int64, keyValue string) (*models.ProviderKey, error) { return nil, nil }
+func (m *mockStore) UpdateProviderKey(id int64, keyValue string, isActive bool) error { return nil }
+func (m *mockStore) DeleteProviderKey(id int64) error { return nil }
 func (m *mockStore) ListApiKeys() ([]models.ApiKey, error)                { return nil, nil }
 func (m *mockStore) GetApiKeyByName(name string) (*models.ApiKey, error)  { return nil, fmt.Errorf("not found") }
 func (m *mockStore) CreateApiKey(name string, rateLimitRPM int) (*models.ApiKey, error) { return nil, nil }
@@ -925,5 +929,98 @@ func TestRouter_PrefixBeforeWildcard(t *testing.T) {
 	}
 	if p.Name != "specific" {
 		t.Errorf("expected 'specific' (exact match before wildcard), got '%s'", p.Name)
+	}
+}
+
+// =============================================================================
+// KeySelector Tests
+// =============================================================================
+
+func TestKeySelector_Empty(t *testing.T) {
+	ks := NewKeySelector(nil)
+	if ks.Current() != "" {
+		t.Error("expected empty string for nil keys")
+	}
+	if ks.HasNext() {
+		t.Error("expected no next for empty keys")
+	}
+	if ks.Len() != 0 {
+		t.Error("expected len 0 for empty keys")
+	}
+}
+
+func TestKeySelector_SingleKey(t *testing.T) {
+	ks := NewKeySelector([]models.ProviderKey{
+		{KeyValue: "sk-test-1", IsActive: true},
+	})
+	if ks.Current() != "sk-test-1" {
+		t.Errorf("expected 'sk-test-1', got '%s'", ks.Current())
+	}
+	if ks.HasNext() {
+		t.Error("expected no next for single key")
+	}
+	if ks.Len() != 1 {
+		t.Errorf("expected len 1, got %d", ks.Len())
+	}
+	if ks.Index() != 0 {
+		t.Errorf("expected index 0, got %d", ks.Index())
+	}
+}
+
+func TestKeySelector_MultipleKeys(t *testing.T) {
+	ks := NewKeySelector([]models.ProviderKey{
+		{KeyValue: "sk-key-1", IsActive: true},
+		{KeyValue: "sk-key-2", IsActive: true},
+		{KeyValue: "sk-key-3", IsActive: true},
+	})
+	if ks.Current() != "sk-key-1" {
+		t.Errorf("expected first key, got '%s'", ks.Current())
+	}
+	if !ks.HasNext() {
+		t.Error("expected next to be available")
+	}
+	if ks.Next() != "sk-key-2" {
+		t.Errorf("expected second key, got '%s'", ks.Current())
+	}
+	if ks.Index() != 1 {
+		t.Errorf("expected index 1, got %d", ks.Index())
+	}
+	if !ks.HasNext() {
+		t.Error("expected next to still be available")
+	}
+	if ks.Next() != "sk-key-3" {
+		t.Errorf("expected third key, got '%s'", ks.Current())
+	}
+	if ks.HasNext() {
+		t.Error("expected no next after last key")
+	}
+	if ks.Next() != "" {
+		t.Error("expected empty after exhaustion")
+	}
+}
+
+func TestKeySelector_FiltersInactive(t *testing.T) {
+	ks := NewKeySelector([]models.ProviderKey{
+		{KeyValue: "sk-key-1", IsActive: false},
+		{KeyValue: "sk-key-2", IsActive: true},
+	})
+	if ks.Len() != 1 {
+		t.Errorf("expected 1 active key, got %d", ks.Len())
+	}
+	if ks.Current() != "sk-key-2" {
+		t.Errorf("expected active key, got '%s'", ks.Current())
+	}
+}
+
+func TestKeySelector_FiltersEmptyValue(t *testing.T) {
+	ks := NewKeySelector([]models.ProviderKey{
+		{KeyValue: "", IsActive: true},
+		{KeyValue: "sk-key-1", IsActive: true},
+	})
+	if ks.Len() != 1 {
+		t.Errorf("expected 1 non-empty key, got %d", ks.Len())
+	}
+	if ks.Current() != "sk-key-1" {
+		t.Errorf("expected key with value, got '%s'", ks.Current())
 	}
 }

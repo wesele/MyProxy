@@ -1093,3 +1093,113 @@ func TestEdgeCases(t *testing.T) {
 		}
 	})
 }
+
+func TestProviderKeysCRUD(t *testing.T) {
+	t.Run("List/empty", func(t *testing.T) {
+		store := newTestStore(t)
+		p := &models.Provider{Name: "test", ProviderType: "openai", BaseURL: "https://example.com"}
+		id, err := store.CreateProvider(p)
+		if err != nil {
+			t.Fatalf("CreateProvider() error = %v", err)
+		}
+		keys, err := store.ListProviderKeys(id)
+		if err != nil {
+			t.Fatalf("ListProviderKeys() error = %v", err)
+		}
+		if len(keys) != 0 {
+			t.Errorf("expected 0 keys, got %d", len(keys))
+		}
+	})
+
+	t.Run("Create/list", func(t *testing.T) {
+		store := newTestStore(t)
+		p := &models.Provider{Name: "test", ProviderType: "openai", BaseURL: "https://example.com"}
+		id, _ := store.CreateProvider(p)
+
+		k1, err := store.CreateProviderKey(id, "sk-key-1")
+		if err != nil {
+			t.Fatalf("CreateProviderKey() error = %v", err)
+		}
+		if k1.ProviderID != id {
+			t.Errorf("ProviderID = %d, want %d", k1.ProviderID, id)
+		}
+		if k1.KeyValue != "sk-key-1" {
+			t.Errorf("KeyValue = '%s', want 'sk-key-1'", k1.KeyValue)
+		}
+
+		store.CreateProviderKey(id, "sk-key-2")
+
+		keys, _ := store.ListProviderKeys(id)
+		if len(keys) != 2 {
+			t.Fatalf("expected 2 keys, got %d", len(keys))
+		}
+		if keys[0].KeyValue != "sk-key-1" {
+			t.Errorf("first key value = '%s', want 'sk-key-1'", keys[0].KeyValue)
+		}
+		if keys[1].KeyValue != "sk-key-2" {
+			t.Errorf("second key value = '%s', want 'sk-key-2'", keys[1].KeyValue)
+		}
+	})
+
+	t.Run("Update/activate", func(t *testing.T) {
+		store := newTestStore(t)
+		p := &models.Provider{Name: "test", ProviderType: "openai", BaseURL: "https://example.com"}
+		id, _ := store.CreateProvider(p)
+		k, _ := store.CreateProviderKey(id, "sk-old")
+
+		err := store.UpdateProviderKey(k.ID, "sk-new", true)
+		if err != nil {
+			t.Fatalf("UpdateProviderKey() error = %v", err)
+		}
+
+		keys, _ := store.ListProviderKeys(id)
+		if len(keys) != 1 {
+			t.Fatalf("expected 1 key, got %d", len(keys))
+		}
+		if keys[0].KeyValue != "sk-new" {
+			t.Errorf("key value = '%s', want 'sk-new'", keys[0].KeyValue)
+		}
+		if !keys[0].IsActive {
+			t.Error("expected key to be active")
+		}
+	})
+
+	t.Run("Delete", func(t *testing.T) {
+		store := newTestStore(t)
+		p := &models.Provider{Name: "test", ProviderType: "openai", BaseURL: "https://example.com"}
+		id, _ := store.CreateProvider(p)
+		k, _ := store.CreateProviderKey(id, "sk-del")
+
+		err := store.DeleteProviderKey(k.ID)
+		if err != nil {
+			t.Fatalf("DeleteProviderKey() error = %v", err)
+		}
+
+		keys, _ := store.ListProviderKeys(id)
+		if len(keys) != 0 {
+			t.Errorf("expected 0 keys after delete, got %d", len(keys))
+		}
+	})
+
+	t.Run("CreateProvider with api_key creates key", func(t *testing.T) {
+		store := newTestStore(t)
+		p := &models.Provider{
+			Name:         "test-with-key",
+			ProviderType: "openai",
+			BaseURL:      "https://example.com",
+			APIKey:       "sk-from-provider",
+		}
+		id, err := store.CreateProvider(p)
+		if err != nil {
+			t.Fatalf("CreateProvider() error = %v", err)
+		}
+
+		keys, _ := store.ListProviderKeys(id)
+		if len(keys) != 1 {
+			t.Fatalf("expected 1 key, got %d", len(keys))
+		}
+		if keys[0].KeyValue != "sk-from-provider" {
+			t.Errorf("key value = '%s', want 'sk-from-provider'", keys[0].KeyValue)
+		}
+	})
+}

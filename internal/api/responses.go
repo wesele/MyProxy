@@ -311,52 +311,73 @@ func (h *ResponsesHandler) handleStandardResponses(c *gin.Context, provider *mod
 
 	targetURL := strings.TrimRight(provider.BaseURL, "/") + "/chat/completions"
 
-	req, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, bytes.NewReader(chatBody))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, responsesErrorResponse{
-			Object: "response",
-			Error:  responsesError{Type: "server_error", Message: "failed to create request"},
-		})
-		return
+	selector := proxy.NewKeySelector(provider.Keys)
+	if selector.Len() == 0 && provider.APIKey != "" {
+		selector = proxy.NewKeySelector([]models.ProviderKey{{KeyValue: provider.APIKey, IsActive: true}})
 	}
 
-	req.Header.Set("Authorization", "Bearer "+provider.APIKey)
-	req.Header.Set("Content-Type", "application/json")
+	for {
+		req, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, bytes.NewReader(chatBody))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, responsesErrorResponse{
+				Object: "response",
+				Error:  responsesError{Type: "server_error", Message: "failed to create request"},
+			})
+			return
+		}
 
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		h.logger.Error("upstream request failed", zap.Error(err))
-		c.JSON(http.StatusBadGateway, responsesErrorResponse{
-			Object: "response",
-			Error:  responsesError{Type: "upstream_error", Message: "upstream request failed: " + err.Error()},
-		})
+		req.Header.Set("Authorization", "Bearer "+selector.Current())
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := h.httpClient.Do(req)
+		if err != nil {
+			h.logger.Error("upstream request failed", zap.Error(err))
+			c.JSON(http.StatusBadGateway, responsesErrorResponse{
+				Object: "response",
+				Error:  responsesError{Type: "upstream_error", Message: "upstream request failed: " + err.Error()},
+			})
+			return
+		}
+
+		if resp.StatusCode == 429 && selector.HasNext() {
+			keyIdx := selector.Index()
+			resp.Body.Close()
+			h.logger.Warn("responses rate limited (429), switching to next key",
+				zap.Int("from_key_index", keyIdx),
+				zap.Int("to_key_index", keyIdx+1),
+			)
+			selector.Next()
+			continue
+		}
+
+		c.Set("provider_key_index", selector.Index())
+		defer resp.Body.Close()
+
+		if respReq.Stream || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+			h.streamChatCompletionsToResponses(c, resp.Body, respID, msgID, upstreamModel)
+			return
+		}
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, responsesErrorResponse{
+				Object: "response",
+				Error:  responsesError{Type: "server_error", Message: "failed to read response"},
+			})
+			return
+		}
+
+		pt, ct, ict := proxy.ParseTokens(respBody)
+		c.Set("proxy_prompt_tokens", pt)
+		c.Set("proxy_completion_tokens", ct)
+		c.Set("proxy_input_cache_tokens", ict)
+
+		translated := chatCompletionsToResponses(respBody, upstreamModel, respID, msgID)
+		c.Set("response_summary", proxy.ExtractResponseSummary(respBody))
+
+		c.Data(resp.StatusCode, "application/json", translated)
 		return
 	}
-	defer resp.Body.Close()
-
-	if respReq.Stream || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
-		h.streamChatCompletionsToResponses(c, resp.Body, respID, msgID, upstreamModel)
-		return
-	}
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, responsesErrorResponse{
-			Object: "response",
-			Error:  responsesError{Type: "server_error", Message: "failed to read response"},
-		})
-		return
-	}
-
-	pt, ct, ict := proxy.ParseTokens(respBody)
-	c.Set("proxy_prompt_tokens", pt)
-	c.Set("proxy_completion_tokens", ct)
-	c.Set("proxy_input_cache_tokens", ict)
-
-	translated := chatCompletionsToResponses(respBody, upstreamModel, respID, msgID)
-	c.Set("response_summary", proxy.ExtractResponseSummary(respBody))
-
-	c.Data(resp.StatusCode, "application/json", translated)
 }
 
 func (h *ResponsesHandler) handleGeminiResponses(c *gin.Context, origBody []byte, provider *models.Provider, upstreamModel string, respReq responsesRequestBody) {
@@ -400,59 +421,81 @@ func (h *ResponsesHandler) handleGeminiResponses(c *gin.Context, origBody []byte
 	c.Set("request_summary", extractResponsesSummary(respReq))
 
 	baseURL := strings.TrimRight(provider.BaseURL, "/")
-	var targetURL string
-	if respReq.Stream {
-		targetURL = fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse&key=%s", baseURL, geminiModel, provider.APIKey)
-	} else {
-		targetURL = fmt.Sprintf("%s/models/%s:generateContent?key=%s", baseURL, geminiModel, provider.APIKey)
+
+	selector := proxy.NewKeySelector(provider.Keys)
+	if selector.Len() == 0 && provider.APIKey != "" {
+		selector = proxy.NewKeySelector([]models.ProviderKey{{KeyValue: provider.APIKey, IsActive: true}})
 	}
 
-	httpReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, bytes.NewReader(geminiBody))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, responsesErrorResponse{
-			Object: "response",
-			Error:  responsesError{Type: "server_error", Message: "failed to create request"},
-		})
+	for {
+		var targetURL string
+		if respReq.Stream {
+			targetURL = fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse&key=%s", baseURL, geminiModel, selector.Current())
+		} else {
+			targetURL = fmt.Sprintf("%s/models/%s:generateContent?key=%s", baseURL, geminiModel, selector.Current())
+		}
+
+		httpReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, bytes.NewReader(geminiBody))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, responsesErrorResponse{
+				Object: "response",
+				Error:  responsesError{Type: "server_error", Message: "failed to create request"},
+			})
+			return
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err := h.httpClient.Do(httpReq)
+		if err != nil {
+			h.logger.Error("gemini upstream request failed", zap.Error(err))
+			c.JSON(http.StatusBadGateway, responsesErrorResponse{
+				Object: "response",
+				Error:  responsesError{Type: "upstream_error", Message: "upstream request failed: " + err.Error()},
+			})
+			return
+		}
+
+		if resp.StatusCode == 429 && selector.HasNext() {
+			keyIdx := selector.Index()
+			resp.Body.Close()
+			h.logger.Warn("responses gemini rate limited (429), switching to next key",
+				zap.Int("from_key_index", keyIdx),
+				zap.Int("to_key_index", keyIdx+1),
+			)
+			selector.Next()
+			continue
+		}
+
+		c.Set("provider_key_index", selector.Index())
+		defer resp.Body.Close()
+
+		if respReq.Stream {
+			h.streamGeminiToResponses(c, resp.Body, respID, msgID, upstreamModel)
+			return
+		}
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, responsesErrorResponse{
+				Object: "response",
+				Error:  responsesError{Type: "server_error", Message: "failed to read response"},
+			})
+			return
+		}
+
+		pt, ct, ict := parseGeminiUsage(respBody)
+		c.Set("proxy_prompt_tokens", pt)
+		c.Set("proxy_completion_tokens", ct)
+		c.Set("proxy_input_cache_tokens", ict)
+
+		// Convert gemini -> chat completions -> responses
+		chatResp := translateGeminiToOpenAI(respBody, upstreamModel)
+		translated := chatCompletionsToResponses(chatResp, upstreamModel, respID, msgID)
+		c.Set("response_summary", proxy.ExtractResponseSummary(chatResp))
+
+		c.Data(resp.StatusCode, "application/json", translated)
 		return
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := h.httpClient.Do(httpReq)
-	if err != nil {
-		h.logger.Error("gemini upstream request failed", zap.Error(err))
-		c.JSON(http.StatusBadGateway, responsesErrorResponse{
-			Object: "response",
-			Error:  responsesError{Type: "upstream_error", Message: "upstream request failed: " + err.Error()},
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	if respReq.Stream {
-		h.streamGeminiToResponses(c, resp.Body, respID, msgID, upstreamModel)
-		return
-	}
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, responsesErrorResponse{
-			Object: "response",
-			Error:  responsesError{Type: "server_error", Message: "failed to read response"},
-		})
-		return
-	}
-
-	pt, ct, ict := parseGeminiUsage(respBody)
-	c.Set("proxy_prompt_tokens", pt)
-	c.Set("proxy_completion_tokens", ct)
-	c.Set("proxy_input_cache_tokens", ict)
-
-	// Convert gemini -> chat completions -> responses
-	chatResp := translateGeminiToOpenAI(respBody, upstreamModel)
-	translated := chatCompletionsToResponses(chatResp, upstreamModel, respID, msgID)
-	c.Set("response_summary", proxy.ExtractResponseSummary(chatResp))
-
-	c.Data(resp.StatusCode, "application/json", translated)
 }
 
 func extractResponsesSummary(req responsesRequestBody) string {

@@ -15,6 +15,11 @@ type Store interface {
 	FindProviderByName(name string) (*models.Provider, error)
 	GetProviderByModel(model string) (*models.Provider, error)
 
+	ListProviderKeys(providerID int64) ([]models.ProviderKey, error)
+	CreateProviderKey(providerID int64, keyValue string) (*models.ProviderKey, error)
+	UpdateProviderKey(id int64, keyValue string, isActive bool) error
+	DeleteProviderKey(id int64) error
+
 	ListApiKeys() ([]models.ApiKey, error)
 	GetApiKeyByName(name string) (*models.ApiKey, error)
 	CreateApiKey(name string, rateLimitRPM int) (*models.ApiKey, error)

@@ -94,14 +94,23 @@ def provider_add():
             models = json.loads(models_raw)
         except json.JSONDecodeError:
             models = []
+        keys_raw = request.form.get("keys_json", "[]")
+        try:
+            keys = json.loads(keys_raw)
+        except json.JSONDecodeError:
+            keys = []
         payload = {
             "name": request.form["name"],
             "provider_type": request.form["provider_type"],
             "base_url": request.form["base_url"],
-            "api_key": request.form["api_key"],
             "models": models,
+            "keys": keys,
             "priority": int(request.form.get("priority", 0)),
         }
+        if keys:
+            payload["api_key"] = keys[0].get("key_value", "")
+        elif request.form.get("api_key"):
+            payload["api_key"] = request.form["api_key"]
         api_call("POST", "/providers", payload)
         return redirect(url_for("providers"))
     return render_template("provider_form.html", provider=None)
@@ -115,14 +124,23 @@ def provider_edit(pid):
             models = json.loads(models_raw)
         except json.JSONDecodeError:
             models = []
+        keys_raw = request.form.get("keys_json", "[]")
+        try:
+            keys = json.loads(keys_raw)
+        except json.JSONDecodeError:
+            keys = []
         payload = {
             "name": request.form["name"],
             "provider_type": request.form["provider_type"],
             "base_url": request.form["base_url"],
-            "api_key": request.form.get("api_key", ""),
             "models": models,
+            "keys": keys,
             "priority": int(request.form.get("priority", 0)),
         }
+        if keys:
+            payload["api_key"] = keys[0].get("key_value", "")
+        elif request.form.get("api_key"):
+            payload["api_key"] = request.form["api_key"]
         api_call("PUT", f"/providers/{pid}", payload)
         return redirect(url_for("providers"))
     providers_data = api_call("GET", "/providers")

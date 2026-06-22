@@ -718,6 +718,127 @@ func (h *AdminHandler) GenToken(c *gin.Context) {
 	c.JSON(http.StatusCreated, key)
 }
 
+func (h *AdminHandler) ListProviderKeys(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid provider id"})
+		return
+	}
+	keys, err := h.store.ListProviderKeys(id)
+	if err != nil {
+		h.logger.Error("list provider keys", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if keys == nil {
+		keys = []models.ProviderKey{}
+	}
+	for i := range keys {
+		if keys[i].KeyValue != "" {
+			keys[i].KeyValue = maskAPIKey(keys[i].KeyValue)
+		}
+	}
+	c.JSON(http.StatusOK, keys)
+}
+
+func (h *AdminHandler) GetProviderKey(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("keyId"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid key id"})
+		return
+	}
+	pid, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid provider id"})
+		return
+	}
+	keys, err := h.store.ListProviderKeys(pid)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "provider not found"})
+		return
+	}
+	for _, k := range keys {
+		if k.ID == id {
+			if c.Query("show_key") != "1" {
+				k.KeyValue = maskAPIKey(k.KeyValue)
+			}
+			c.JSON(http.StatusOK, k)
+			return
+		}
+	}
+	c.JSON(http.StatusNotFound, gin.H{"error": "key not found"})
+}
+
+func (h *AdminHandler) CreateProviderKey(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid provider id"})
+		return
+	}
+	var req struct {
+		KeyValue string `json:"key_value"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.KeyValue == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "key_value is required"})
+		return
+	}
+	key, err := h.store.CreateProviderKey(id, req.KeyValue)
+	if err != nil {
+		h.logger.Error("create provider key", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	key.KeyValue = maskAPIKey(key.KeyValue)
+	h.router.Refresh()
+	c.JSON(http.StatusCreated, key)
+}
+
+func (h *AdminHandler) UpdateProviderKey(c *gin.Context) {
+	keyId, err := strconv.ParseInt(c.Param("keyId"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid key id"})
+		return
+	}
+	var req struct {
+		KeyValue string `json:"key_value"`
+		IsActive *bool  `json:"is_active"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	isActive := true
+	if req.IsActive != nil {
+		isActive = *req.IsActive
+	}
+	if err := h.store.UpdateProviderKey(keyId, req.KeyValue, isActive); err != nil {
+		h.logger.Error("update provider key", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	h.router.Refresh()
+	c.JSON(http.StatusOK, gin.H{"message": "updated"})
+}
+
+func (h *AdminHandler) DeleteProviderKey(c *gin.Context) {
+	keyId, err := strconv.ParseInt(c.Param("keyId"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid key id"})
+		return
+	}
+	if err := h.store.DeleteProviderKey(keyId); err != nil {
+		h.logger.Error("delete provider key", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	h.router.Refresh()
+	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+}
+
 type providerTestReq struct {
 	BaseURL      string `json:"base_url"`
 	APIKey       string `json:"api_key"`

@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/user/qwenportal/internal/middleware"
+	"github.com/user/qwenportal/internal/models"
 	"github.com/user/qwenportal/internal/proxy"
 	"go.uber.org/zap"
 )
@@ -320,70 +321,92 @@ func (h *GeminiHandler) ChatCompletions(c *gin.Context) {
 	}
 
 	baseURL := strings.TrimRight(provider.BaseURL, "/")
-	var targetURL string
-	if reqBody.Stream {
-		targetURL = fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse&key=%s", baseURL, modelName, provider.APIKey)
-	} else {
-		targetURL = fmt.Sprintf("%s/models/%s:generateContent?key=%s", baseURL, modelName, provider.APIKey)
+
+	selector := proxy.NewKeySelector(provider.Keys)
+	if selector.Len() == 0 && provider.APIKey != "" {
+		selector = proxy.NewKeySelector([]models.ProviderKey{{KeyValue: provider.APIKey, IsActive: true}})
 	}
 
-	httpReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, bytes.NewReader(geminiBody))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create request"})
-		return
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
+	for {
+		var targetURL string
+		if reqBody.Stream {
+			targetURL = fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse&key=%s", baseURL, modelName, selector.Current())
+		} else {
+			targetURL = fmt.Sprintf("%s/models/%s:generateContent?key=%s", baseURL, modelName, selector.Current())
+		}
 
-	httpClient := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		h.logger.Error("gemini upstream request failed", zap.Error(err))
-		c.JSON(http.StatusBadGateway, gin.H{"error": "upstream request failed: " + err.Error()})
-		return
-	}
-	defer resp.Body.Close()
+		httpReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, bytes.NewReader(geminiBody))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create request"})
+			return
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
 
-	if reqBody.Stream || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
-		c.Header("Content-Type", "text/event-stream")
-		c.Header("Cache-Control", "no-cache")
-		c.Header("Connection", "keep-alive")
-		c.Writer.WriteHeader(resp.StatusCode)
+		httpClient := &http.Client{Timeout: 5 * time.Minute}
+		resp, err := httpClient.Do(httpReq)
+		if err != nil {
+			h.logger.Error("gemini upstream request failed", zap.Error(err))
+			c.JSON(http.StatusBadGateway, gin.H{"error": "upstream request failed: " + err.Error()})
+			return
+		}
 
-		reader := newGeminiStreamReader(resp.Body, modelName)
-		flusher, canFlush := c.Writer.(http.Flusher)
-		buf := make([]byte, 4096)
-		for {
-			n, err := reader.Read(buf)
-			if n > 0 {
-				c.Writer.Write(buf[:n])
-				if canFlush {
-					flusher.Flush()
+		if resp.StatusCode == 429 && selector.HasNext() {
+			keyIdx := selector.Index()
+			resp.Body.Close()
+			h.logger.Warn("gemini rate limited (429), switching to next key",
+				zap.Int("from_key_index", keyIdx),
+				zap.Int("to_key_index", keyIdx+1),
+			)
+			selector.Next()
+			continue
+		}
+
+		c.Set("provider_key_index", selector.Index())
+		defer resp.Body.Close()
+
+		if reqBody.Stream || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+			c.Header("Content-Type", "text/event-stream")
+			c.Header("Cache-Control", "no-cache")
+			c.Header("Connection", "keep-alive")
+			c.Writer.WriteHeader(resp.StatusCode)
+
+			reader := newGeminiStreamReader(resp.Body, modelName)
+			flusher, canFlush := c.Writer.(http.Flusher)
+			buf := make([]byte, 4096)
+			for {
+				n, err := reader.Read(buf)
+				if n > 0 {
+					c.Writer.Write(buf[:n])
+					if canFlush {
+						flusher.Flush()
+					}
+				}
+				if err != nil {
+					break
 				}
 			}
-			if err != nil {
-				break
-			}
+			return
 		}
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
+			return
+		}
+
+		pt, ct, ict := parseGeminiUsage(respBody)
+		c.Set("proxy_prompt_tokens", pt)
+		c.Set("proxy_completion_tokens", ct)
+		c.Set("proxy_input_cache_tokens", ict)
+
+		c.Set("request_summary", proxy.ExtractRequestSummary(body))
+
+		translated := translateGeminiToOpenAI(respBody, modelName)
+		c.Set("response_summary", proxy.ExtractResponseSummary(translated))
+
+		c.Data(resp.StatusCode, "application/json", translated)
 		return
 	}
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-		return
-	}
-
-	pt, ct, ict := parseGeminiUsage(respBody)
-	c.Set("proxy_prompt_tokens", pt)
-	c.Set("proxy_completion_tokens", ct)
-	c.Set("proxy_input_cache_tokens", ict)
-
-	c.Set("request_summary", proxy.ExtractRequestSummary(body))
-
-	translated := translateGeminiToOpenAI(respBody, modelName)
-	c.Set("response_summary", proxy.ExtractResponseSummary(translated))
-
-	c.Data(resp.StatusCode, "application/json", translated)
 }
 
 func parseGeminiUsage(body []byte) (int, int, int) {

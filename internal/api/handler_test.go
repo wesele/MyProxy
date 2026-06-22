@@ -56,6 +56,9 @@ type mockStore struct {
 	verifyApiKey    *models.ApiKey
 	verifyApiKeyErr error
 
+	createProviderKey    *models.ProviderKey
+	createProviderKeyErr error
+
 	insertLogErr error
 
 	stats    *models.StatsResponse
@@ -115,6 +118,19 @@ func (m *mockStore) GetProviderByModel(model string) (*models.Provider, error) {
 	}
 	return m.getProviderByModel, nil
 }
+
+func (m *mockStore) ListProviderKeys(providerID int64) ([]models.ProviderKey, error) { return nil, nil }
+func (m *mockStore) CreateProviderKey(providerID int64, keyValue string) (*models.ProviderKey, error) {
+	if m.createProviderKeyErr != nil {
+		return nil, m.createProviderKeyErr
+	}
+	if m.createProviderKey != nil {
+		return m.createProviderKey, nil
+	}
+	return &models.ProviderKey{ID: 1, ProviderID: providerID, KeyValue: keyValue, IsActive: true}, nil
+}
+func (m *mockStore) UpdateProviderKey(id int64, keyValue string, isActive bool) error { return nil }
+func (m *mockStore) DeleteProviderKey(id int64) error { return nil }
 
 func (m *mockStore) ListApiKeys() ([]models.ApiKey, error) {
 	if m.apiKeysErr != nil {
@@ -799,6 +815,102 @@ func TestAdminHandler_CreateApiKey(t *testing.T) {
 
 		if w.Code != http.StatusInternalServerError {
 			t.Fatalf("expected 500, got %d", w.Code)
+		}
+	})
+}
+
+func TestAdminHandler_ProviderKeys(t *testing.T) {
+	t.Run("ListProviderKeys/empty", func(t *testing.T) {
+		store := setupMockStore()
+		handler := NewAdminHandler(newTestLogger(), nil, store, nil)
+
+		c, w := newTestContext("GET", "/api/providers/1/keys", nil)
+		c.Params = gin.Params{{Key: "id", Value: "1"}}
+		handler.ListProviderKeys(c)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var keys []models.ProviderKey
+		json.NewDecoder(w.Body).Decode(&keys)
+		if keys == nil {
+			t.Error("expected non-nil empty list")
+		}
+	})
+
+	t.Run("ListProviderKeys/invalid id", func(t *testing.T) {
+		store := setupMockStore()
+		handler := NewAdminHandler(newTestLogger(), nil, store, nil)
+
+		c, w := newTestContext("GET", "/api/providers/abc/keys", nil)
+		c.Params = gin.Params{{Key: "id", Value: "abc"}}
+		handler.ListProviderKeys(c)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("CreateProviderKey/success", func(t *testing.T) {
+		store := setupMockStore()
+		store.createProviderID = 1
+		router := proxy.NewRouter(store)
+		h := NewAdminHandler(newTestLogger(), router, store, nil)
+
+		body := `{"key_value":"sk-new-key"}`
+		c, w := newTestContext("POST", "/api/providers/1/keys", strings.NewReader(body))
+		c.Params = gin.Params{{Key: "id", Value: "1"}}
+		h.CreateProviderKey(c)
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+		var key models.ProviderKey
+		json.NewDecoder(w.Body).Decode(&key)
+		if key.KeyValue == "" {
+			t.Error("expected non-empty masked key")
+		}
+	})
+
+	t.Run("CreateProviderKey/missing key", func(t *testing.T) {
+		store := setupMockStore()
+		router := proxy.NewRouter(store)
+		h := NewAdminHandler(newTestLogger(), router, store, nil)
+
+		body := `{}`
+		c, w := newTestContext("POST", "/api/providers/1/keys", strings.NewReader(body))
+		c.Params = gin.Params{{Key: "id", Value: "1"}}
+		h.CreateProviderKey(c)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("DeleteProviderKey/success", func(t *testing.T) {
+		store := setupMockStore()
+		router := proxy.NewRouter(store)
+		h := NewAdminHandler(newTestLogger(), router, store, nil)
+
+		c, w := newTestContext("DELETE", "/api/providers/1/keys/1", nil)
+		c.Params = gin.Params{{Key: "id", Value: "1"}, {Key: "keyId", Value: "1"}}
+		h.DeleteProviderKey(c)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+	})
+
+	t.Run("DeleteProviderKey/invalid id", func(t *testing.T) {
+		store := setupMockStore()
+		h := NewAdminHandler(newTestLogger(), nil, store, nil)
+
+		c, w := newTestContext("DELETE", "/api/providers/1/keys/abc", nil)
+		c.Params = gin.Params{{Key: "id", Value: "1"}, {Key: "keyId", Value: "abc"}}
+		h.DeleteProviderKey(c)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
 		}
 	})
 }

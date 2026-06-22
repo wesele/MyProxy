@@ -33,6 +33,10 @@ func (m *mockStore) FindProviderByName(name string) (*models.Provider, error) {
 func (m *mockStore) GetProviderByModel(model string) (*models.Provider, error) {
 	return nil, nil
 }
+func (m *mockStore) ListProviderKeys(providerID int64) ([]models.ProviderKey, error) { return nil, nil }
+func (m *mockStore) CreateProviderKey(providerID int64, keyValue string) (*models.ProviderKey, error) { return nil, nil }
+func (m *mockStore) UpdateProviderKey(id int64, keyValue string, isActive bool) error { return nil }
+func (m *mockStore) DeleteProviderKey(id int64) error { return nil }
 func (m *mockStore) ListApiKeys() ([]models.ApiKey, error) { return nil, nil }
 func (m *mockStore) GetApiKeyByName(name string) (*models.ApiKey, error) { return nil, fmt.Errorf("not found") }
 func (m *mockStore) CreateApiKey(name string, rateLimitRPM int) (*models.ApiKey, error) {
@@ -243,7 +247,7 @@ func TestAuthMiddleware_NonBearerFormat(t *testing.T) {
 func TestAdminAuth_LocalhostIPv4(t *testing.T) {
 	store := &mockStore{}
 	c, w := createTestContextWithIP(t, "127.0.0.1", "")
-	handler := AdminAuth(store)
+	handler := AdminAuth(store, nil)
 	handler(c)
 
 	if w.Code != http.StatusOK {
@@ -254,7 +258,7 @@ func TestAdminAuth_LocalhostIPv4(t *testing.T) {
 func TestAdminAuth_LocalhostIPv6(t *testing.T) {
 	store := &mockStore{}
 	c, w := createTestContextWithIP(t, "::1", "")
-	handler := AdminAuth(store)
+	handler := AdminAuth(store, nil)
 	handler(c)
 
 	if w.Code != http.StatusOK {
@@ -265,7 +269,7 @@ func TestAdminAuth_LocalhostIPv6(t *testing.T) {
 func TestAdminAuth_PrivateIP_192_168(t *testing.T) {
 	store := &mockStore{}
 	c, w := createTestContextWithIP(t, "192.168.1.100", "")
-	handler := AdminAuth(store)
+	handler := AdminAuth(store, nil)
 	handler(c)
 
 	if w.Code != http.StatusOK {
@@ -276,7 +280,7 @@ func TestAdminAuth_PrivateIP_192_168(t *testing.T) {
 func TestAdminAuth_PrivateIP_10(t *testing.T) {
 	store := &mockStore{}
 	c, w := createTestContextWithIP(t, "10.0.0.1", "")
-	handler := AdminAuth(store)
+	handler := AdminAuth(store, nil)
 	handler(c)
 
 	if w.Code != http.StatusOK {
@@ -294,7 +298,7 @@ func TestAdminAuth_ValidBearerFromPublicIP(t *testing.T) {
 		},
 	}
 	c, w := createTestContextWithIP(t, "203.0.113.1", "Bearer admin-key")
-	handler := AdminAuth(store)
+	handler := AdminAuth(store, nil)
 	handler(c)
 
 	if w.Code != http.StatusOK {
@@ -309,7 +313,7 @@ func TestAdminAuth_ValidBearerFromPublicIP(t *testing.T) {
 func TestAdminAuth_PublicIPNoAuth(t *testing.T) {
 	store := &mockStore{}
 	c, w := createTestContextWithIP(t, "203.0.113.1", "")
-	handler := AdminAuth(store)
+	handler := AdminAuth(store, nil)
 	handler(c)
 
 	if w.Code != http.StatusUnauthorized {
@@ -324,7 +328,7 @@ func TestAdminAuth_PublicIPInvalidToken(t *testing.T) {
 		},
 	}
 	c, w := createTestContextWithIP(t, "203.0.113.1", "Bearer bad-key")
-	handler := AdminAuth(store)
+	handler := AdminAuth(store, nil)
 	handler(c)
 
 	if w.Code != http.StatusUnauthorized {
@@ -339,7 +343,7 @@ func TestAdminAuth_LocalhostWithInvalidTokenStillPasses(t *testing.T) {
 		},
 	}
 	c, w := createTestContextWithIP(t, "127.0.0.1", "Bearer bad-key")
-	handler := AdminAuth(store)
+	handler := AdminAuth(store, nil)
 	handler(c)
 
 	if w.Code != http.StatusOK {
@@ -354,7 +358,7 @@ func TestAdminAuth_PrivateIP10_WithInvalidTokenStillPasses(t *testing.T) {
 		},
 	}
 	c, w := createTestContextWithIP(t, "10.5.5.5", "Bearer bad-key")
-	handler := AdminAuth(store)
+	handler := AdminAuth(store, nil)
 	handler(c)
 
 	if w.Code != http.StatusOK {
@@ -365,7 +369,7 @@ func TestAdminAuth_PrivateIP10_WithInvalidTokenStillPasses(t *testing.T) {
 func TestAdminAuth_192_168_WithNoAuthPasses(t *testing.T) {
 	store := &mockStore{}
 	c, w := createTestContextWithIP(t, "192.168.0.1", "")
-	handler := AdminAuth(store)
+	handler := AdminAuth(store, nil)
 	handler(c)
 
 	if w.Code != http.StatusOK {
@@ -906,7 +910,7 @@ func TestAdminAuth_InvalidBearerFallsThroughToIPCheck(t *testing.T) {
 		},
 	}
 	c, w := createTestContextWithIP(t, "192.168.2.2", "Bearer wrong-key")
-	handler := AdminAuth(store)
+	handler := AdminAuth(store, nil)
 	handler(c)
 
 	if w.Code != http.StatusOK {
@@ -917,7 +921,7 @@ func TestAdminAuth_InvalidBearerFallsThroughToIPCheck(t *testing.T) {
 func TestAdminAuth_EmptyAuthHeaderLocalhost(t *testing.T) {
 	store := &mockStore{}
 	c, w := createTestContextWithIP(t, "127.0.0.1", "")
-	handler := AdminAuth(store)
+	handler := AdminAuth(store, nil)
 	handler(c)
 
 	if w.Code != http.StatusOK {
@@ -935,7 +939,7 @@ func TestAdminAuth_NonPrivateIPRejected(t *testing.T) {
 	for _, ip := range tests {
 		t.Run("IP="+ip, func(t *testing.T) {
 			c, w := createTestContextWithIP(t, ip, "")
-			handler := AdminAuth(store)
+			handler := AdminAuth(store, nil)
 			handler(c)
 
 			if w.Code != http.StatusUnauthorized {
