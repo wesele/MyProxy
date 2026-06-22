@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/user/qwenportal/internal/auth"
 	"github.com/user/qwenportal/internal/db"
 	"github.com/user/qwenportal/internal/models"
 )
@@ -28,12 +29,20 @@ func AuthMiddleware(store db.Store) gin.HandlerFunc {
 	}
 }
 
-func AdminAuth(store db.Store) gin.HandlerFunc {
+func AdminAuth(store db.Store, authManager *auth.AuthManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if keyValue := extractBearerToken(c); keyValue != "" {
 			apiKey, err := store.VerifyApiKey(keyValue)
 			if err == nil {
 				c.Set("api_key", apiKey)
+				c.Next()
+				return
+			}
+		}
+
+		if authManager != nil {
+			sid, err := c.Cookie("session")
+			if err == nil && sid != "" && authManager.ValidateSession(sid) {
 				c.Next()
 				return
 			}

@@ -49,8 +49,8 @@ type Provider struct {
 	Name         string        `json:"name"`
 	ProviderType string        `json:"provider_type"`
 	BaseURL      string        `json:"base_url"`
-	APIKey       string        `json:"api_key,omitempty"`
-	Keys         []ProviderKey `json:"keys,omitempty"`
+	APIKey       string        `json:"api_key"`
+	Keys         []ProviderKey `json:"keys"`
 	ModelsJSON   string        `json:"-"`
 	Models       []ModelConfig `json:"models"`
 	Priority     int           `json:"priority"`

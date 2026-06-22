@@ -346,10 +346,10 @@ function initFromProvider() {
         if (!m.display_name) m.display_name = m.name;
     });
     {% endif %}
-    {% if provider and provider.keys %}
-    keys = {{ provider.keys | tojson }};
-    {% elif provider and provider.api_key %}
-    keys = [{id: 0, key_value: '{{ provider.api_key }}', is_active: true}];
+    {% if provider and provider.get('keys') %}
+    keys = {{ provider.get('keys') | tojson }};
+    {% elif provider and provider.get('api_key') %}
+    keys = [{id: 0, key_value: '{{ provider.get('api_key') }}', is_active: true}];
     {% endif %}
     renderModelsLeft();
     syncModelsJSON();

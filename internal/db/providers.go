@@ -63,12 +63,38 @@ func (s *SQLiteStore) ListProviders() ([]models.Provider, error) {
 		p.Models = unmarshalModels(p.ModelsJSON)
 		providers = append(providers, p)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	rows.Close()
 
-	for i := range providers {
-		providers[i].Keys, _ = s.ListProviderKeys(providers[i].ID)
-		if len(providers[i].Keys) > 0 {
-			providers[i].APIKey = providers[i].Keys[0].KeyValue
+	// Batch-load all provider keys
+	if len(providers) > 0 {
+		ids := make([]interface{}, 0, len(providers))
+		placeholders := ""
+		for i, p := range providers {
+			if i > 0 {
+				placeholders += ","
+			}
+			placeholders += "?"
+			ids = append(ids, p.ID)
+		}
+		keyRows, err := s.db.Query(`SELECT id, provider_id, key_value, is_active, created_at FROM provider_keys WHERE provider_id IN (`+placeholders+`) ORDER BY id`, ids...)
+		if err == nil {
+			keyMap := make(map[int64][]models.ProviderKey)
+			for keyRows.Next() {
+				var k models.ProviderKey
+				if err := keyRows.Scan(&k.ID, &k.ProviderID, &k.KeyValue, &k.IsActive, &k.CreatedAt); err == nil {
+					keyMap[k.ProviderID] = append(keyMap[k.ProviderID], k)
+				}
+			}
+			keyRows.Close()
+			for i := range providers {
+				providers[i].Keys = keyMap[providers[i].ID]
+				if len(providers[i].Keys) > 0 {
+					providers[i].APIKey = providers[i].Keys[0].KeyValue
+				}
+			}
 		}
 	}
 	return providers, nil
