@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -14,8 +15,9 @@ import (
 )
 
 type Forwarder struct {
-	client *http.Client
-	logger *zap.Logger
+	client     *http.Client
+	logger     *zap.Logger
+	keyOffsets sync.Map // provider ID -> next key index to try first
 }
 
 func NewForwarder(logger *zap.Logger) *Forwarder {
@@ -24,6 +26,35 @@ func NewForwarder(logger *zap.Logger) *Forwarder {
 			Timeout: 5 * time.Minute,
 		},
 		logger: logger,
+	}
+}
+
+// NewOffsetKeySelector creates a KeySelector with cross-request round-robin
+// offset applied, so each request starts from a different key.
+func (f *Forwarder) NewOffsetKeySelector(provider *models.Provider) *KeySelector {
+	selector := NewKeySelector(provider.Keys)
+	if selector.Len() == 0 && provider.APIKey != "" {
+		selector = NewKeySelector([]models.ProviderKey{{KeyValue: provider.APIKey, IsActive: true}})
+	}
+	keyCount := selector.Len()
+	if provider.ID > 0 && keyCount > 1 {
+		if val, ok := f.keyOffsets.Load(provider.ID); ok {
+			offset := val.(int)
+			if offset > 0 && offset < keyCount {
+				for i := 0; i < offset; i++ {
+					selector.Next()
+				}
+			}
+		}
+	}
+	return selector
+}
+
+// AdvanceKeyOffset saves the next starting offset for cross-request round-robin.
+func (f *Forwarder) AdvanceKeyOffset(providerID int64, lastIndex int, keyCount int) {
+	if providerID > 0 && keyCount > 1 {
+		nextOffset := (lastIndex + 1) % keyCount
+		f.keyOffsets.Store(providerID, nextOffset)
 	}
 }
 
@@ -214,12 +245,9 @@ func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path stri
 		body = MergeExtraBody(body, mc.ExtraBody)
 	}
 
-	// Build key selector
-	selector := NewKeySelector(provider.Keys)
-	if selector.Len() == 0 && provider.APIKey != "" {
-		// Fallback: use APIKey directly if no Keys configured
-		selector = NewKeySelector([]models.ProviderKey{{KeyValue: provider.APIKey, IsActive: true}})
-	}
+	// Build key selector with cross-request round-robin offset
+	selector := f.NewOffsetKeySelector(provider)
+	keyCount := selector.Len()
 
 	targetURL := strings.TrimRight(provider.BaseURL, "/") + path
 
@@ -266,7 +294,9 @@ func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path stri
 		}
 
 		c.Set("provider_key_index", selector.Index())
+
 		defer resp.Body.Close()
+		f.AdvanceKeyOffset(provider.ID, selector.Index(), keyCount)
 
 		for k, v := range resp.Header {
 			for _, vv := range v {

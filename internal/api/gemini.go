@@ -11,7 +11,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/user/qwenportal/internal/middleware"
-	"github.com/user/qwenportal/internal/models"
 	"github.com/user/qwenportal/internal/proxy"
 	"go.uber.org/zap"
 )
@@ -322,10 +321,8 @@ func (h *GeminiHandler) ChatCompletions(c *gin.Context) {
 
 	baseURL := strings.TrimRight(provider.BaseURL, "/")
 
-	selector := proxy.NewKeySelector(provider.Keys)
-	if selector.Len() == 0 && provider.APIKey != "" {
-		selector = proxy.NewKeySelector([]models.ProviderKey{{KeyValue: provider.APIKey, IsActive: true}})
-	}
+	selector := h.forwarder.NewOffsetKeySelector(provider)
+	keyCount := selector.Len()
 
 	for {
 		var targetURL string
@@ -363,6 +360,7 @@ func (h *GeminiHandler) ChatCompletions(c *gin.Context) {
 
 		c.Set("provider_key_index", selector.Index())
 		defer resp.Body.Close()
+		h.forwarder.AdvanceKeyOffset(provider.ID, selector.Index(), keyCount)
 
 		if reqBody.Stream || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
 			c.Header("Content-Type", "text/event-stream")

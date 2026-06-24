@@ -311,10 +311,8 @@ func (h *ResponsesHandler) handleStandardResponses(c *gin.Context, provider *mod
 
 	targetURL := strings.TrimRight(provider.BaseURL, "/") + "/chat/completions"
 
-	selector := proxy.NewKeySelector(provider.Keys)
-	if selector.Len() == 0 && provider.APIKey != "" {
-		selector = proxy.NewKeySelector([]models.ProviderKey{{KeyValue: provider.APIKey, IsActive: true}})
-	}
+	selector := h.forwarder.NewOffsetKeySelector(provider)
+	keyCount := selector.Len()
 
 	for {
 		req, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, bytes.NewReader(chatBody))
@@ -352,6 +350,7 @@ func (h *ResponsesHandler) handleStandardResponses(c *gin.Context, provider *mod
 
 		c.Set("provider_key_index", selector.Index())
 		defer resp.Body.Close()
+		h.forwarder.AdvanceKeyOffset(provider.ID, selector.Index(), keyCount)
 
 		if respReq.Stream || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
 			h.streamChatCompletionsToResponses(c, resp.Body, respID, msgID, upstreamModel)
@@ -422,10 +421,8 @@ func (h *ResponsesHandler) handleGeminiResponses(c *gin.Context, origBody []byte
 
 	baseURL := strings.TrimRight(provider.BaseURL, "/")
 
-	selector := proxy.NewKeySelector(provider.Keys)
-	if selector.Len() == 0 && provider.APIKey != "" {
-		selector = proxy.NewKeySelector([]models.ProviderKey{{KeyValue: provider.APIKey, IsActive: true}})
-	}
+	selector := h.forwarder.NewOffsetKeySelector(provider)
+	keyCount := selector.Len()
 
 	for {
 		var targetURL string
@@ -468,6 +465,7 @@ func (h *ResponsesHandler) handleGeminiResponses(c *gin.Context, origBody []byte
 
 		c.Set("provider_key_index", selector.Index())
 		defer resp.Body.Close()
+		h.forwarder.AdvanceKeyOffset(provider.ID, selector.Index(), keyCount)
 
 		if respReq.Stream {
 			h.streamGeminiToResponses(c, resp.Body, respID, msgID, upstreamModel)
