@@ -15,9 +15,9 @@ import (
 )
 
 type Forwarder struct {
-	client     *http.Client
-	logger     *zap.Logger
-	keyOffsets sync.Map // provider ID -> next key index to try first
+	client      *http.Client
+	logger      *zap.Logger
+	keyIndexMap sync.Map // provider ID -> current key index
 }
 
 func NewForwarder(logger *zap.Logger) *Forwarder {
@@ -29,33 +29,38 @@ func NewForwarder(logger *zap.Logger) *Forwarder {
 	}
 }
 
-// NewOffsetKeySelector creates a KeySelector with cross-request round-robin
-// offset applied, so each request starts from a different key.
-func (f *Forwarder) NewOffsetKeySelector(provider *models.Provider) *KeySelector {
-	selector := NewKeySelector(provider.Keys)
-	if selector.Len() == 0 && provider.APIKey != "" {
-		selector = NewKeySelector([]models.ProviderKey{{KeyValue: provider.APIKey, IsActive: true}})
+// GetCurrentKeyIndex returns the current key index for the provider.
+func (f *Forwarder) GetCurrentKeyIndex(providerID int64) int {
+	if providerID <= 0 {
+		return 0
 	}
-	keyCount := selector.Len()
-	if provider.ID > 0 && keyCount > 1 {
-		if val, ok := f.keyOffsets.Load(provider.ID); ok {
-			offset := val.(int)
-			if offset > 0 && offset < keyCount {
-				for i := 0; i < offset; i++ {
-					selector.Next()
-				}
-			}
-		}
+	if val, ok := f.keyIndexMap.Load(providerID); ok {
+		return val.(int)
 	}
-	return selector
+	return 0
 }
 
-// AdvanceKeyOffset saves the next starting offset for cross-request round-robin.
-func (f *Forwarder) AdvanceKeyOffset(providerID int64, lastIndex int, keyCount int) {
-	if providerID > 0 && keyCount > 1 {
-		nextOffset := (lastIndex + 1) % keyCount
-		f.keyOffsets.Store(providerID, nextOffset)
+// AdvanceKey advances to the next key index for the provider (wraps around)
+// and returns the new index.
+func (f *Forwarder) AdvanceKey(providerID int64, keyCount int) int {
+	if providerID <= 0 || keyCount <= 1 {
+		return 0
 	}
+	next := (f.GetCurrentKeyIndex(providerID) + 1) % keyCount
+	f.keyIndexMap.Store(providerID, next)
+	return next
+}
+
+// ProviderKeyAt returns the key value at the given index, falling back to
+// provider.APIKey if no keys are configured.
+func ProviderKeyAt(provider *models.Provider, idx int) string {
+	if idx >= 0 && idx < len(provider.Keys) {
+		return provider.Keys[idx].KeyValue
+	}
+	if provider.APIKey != "" {
+		return provider.APIKey
+	}
+	return ""
 }
 
 func Truncate(s string, n int) string {
@@ -245,13 +250,17 @@ func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path stri
 		body = MergeExtraBody(body, mc.ExtraBody)
 	}
 
-	// Build key selector with cross-request round-robin offset
-	selector := f.NewOffsetKeySelector(provider)
-	keyCount := selector.Len()
+	keyCount := len(provider.Keys)
+	if keyCount == 0 {
+		keyCount = 1 // fallback: try at least once (may use empty APIKey)
+	}
+	keyIdx := f.GetCurrentKeyIndex(provider.ID)
 
 	targetURL := strings.TrimRight(provider.BaseURL, "/") + path
 
-	for {
+	for attempt := 0; attempt < keyCount; {
+		key := ProviderKeyAt(provider, keyIdx)
+
 		req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, targetURL, bytes.NewReader(body))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create request"})
@@ -259,12 +268,12 @@ func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path stri
 		}
 
 		if provider.ProviderType == "anthropic" {
-			req.Header.Set("x-api-key", selector.Current())
+			req.Header.Set("x-api-key", key)
 			req.Header.Set("anthropic-version", "2023-06-01")
 		} else if provider.ProviderType == "gemini" {
 			// Gemini uses API key as query param, handled in gemini.go
 		} else {
-			req.Header.Set("Authorization", "Bearer "+selector.Current())
+			req.Header.Set("Authorization", "Bearer "+key)
 		}
 		req.Header.Set("Content-Type", "application/json")
 
@@ -282,21 +291,20 @@ func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path stri
 			return
 		}
 
-		if resp.StatusCode == 429 && selector.HasNext() {
-			keyIdx := selector.Index()
+		if resp.StatusCode == 429 && attempt+1 < keyCount {
 			resp.Body.Close()
 			f.logger.Warn("rate limited (429), switching to next key",
 				zap.Int("from_key_index", keyIdx),
-				zap.Int("to_key_index", keyIdx+1),
+				zap.Int("to_key_index", (keyIdx+1)%keyCount),
 			)
-			selector.Next()
+			keyIdx = f.AdvanceKey(provider.ID, keyCount)
+			attempt++
 			continue
 		}
 
-		c.Set("provider_key_index", selector.Index())
+		c.Set("provider_key_index", keyIdx)
 
 		defer resp.Body.Close()
-		f.AdvanceKeyOffset(provider.ID, selector.Index(), keyCount)
 
 		for k, v := range resp.Header {
 			for _, vv := range v {

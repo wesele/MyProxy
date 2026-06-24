@@ -311,10 +311,15 @@ func (h *ResponsesHandler) handleStandardResponses(c *gin.Context, provider *mod
 
 	targetURL := strings.TrimRight(provider.BaseURL, "/") + "/chat/completions"
 
-	selector := h.forwarder.NewOffsetKeySelector(provider)
-	keyCount := selector.Len()
+	keyCount := len(provider.Keys)
+	if keyCount == 0 {
+		keyCount = 1
+	}
+	keyIdx := h.forwarder.GetCurrentKeyIndex(provider.ID)
 
-	for {
+	for attempt := 0; attempt < keyCount; {
+		key := proxy.ProviderKeyAt(provider, keyIdx)
+
 		req, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, bytes.NewReader(chatBody))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, responsesErrorResponse{
@@ -324,7 +329,7 @@ func (h *ResponsesHandler) handleStandardResponses(c *gin.Context, provider *mod
 			return
 		}
 
-		req.Header.Set("Authorization", "Bearer "+selector.Current())
+		req.Header.Set("Authorization", "Bearer "+key)
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := h.httpClient.Do(req)
@@ -337,20 +342,19 @@ func (h *ResponsesHandler) handleStandardResponses(c *gin.Context, provider *mod
 			return
 		}
 
-		if resp.StatusCode == 429 && selector.HasNext() {
-			keyIdx := selector.Index()
+		if resp.StatusCode == 429 && attempt+1 < keyCount {
 			resp.Body.Close()
 			h.logger.Warn("responses rate limited (429), switching to next key",
 				zap.Int("from_key_index", keyIdx),
-				zap.Int("to_key_index", keyIdx+1),
+				zap.Int("to_key_index", (keyIdx+1)%keyCount),
 			)
-			selector.Next()
+			keyIdx = h.forwarder.AdvanceKey(provider.ID, keyCount)
+			attempt++
 			continue
 		}
 
-		c.Set("provider_key_index", selector.Index())
+		c.Set("provider_key_index", keyIdx)
 		defer resp.Body.Close()
-		h.forwarder.AdvanceKeyOffset(provider.ID, selector.Index(), keyCount)
 
 		if respReq.Stream || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
 			h.streamChatCompletionsToResponses(c, resp.Body, respID, msgID, upstreamModel)
@@ -421,15 +425,20 @@ func (h *ResponsesHandler) handleGeminiResponses(c *gin.Context, origBody []byte
 
 	baseURL := strings.TrimRight(provider.BaseURL, "/")
 
-	selector := h.forwarder.NewOffsetKeySelector(provider)
-	keyCount := selector.Len()
+	keyCount := len(provider.Keys)
+	if keyCount == 0 {
+		keyCount = 1
+	}
+	keyIdx := h.forwarder.GetCurrentKeyIndex(provider.ID)
 
-	for {
+	for attempt := 0; attempt < keyCount; {
+		key := proxy.ProviderKeyAt(provider, keyIdx)
+
 		var targetURL string
 		if respReq.Stream {
-			targetURL = fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse&key=%s", baseURL, geminiModel, selector.Current())
+			targetURL = fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse&key=%s", baseURL, geminiModel, key)
 		} else {
-			targetURL = fmt.Sprintf("%s/models/%s:generateContent?key=%s", baseURL, geminiModel, selector.Current())
+			targetURL = fmt.Sprintf("%s/models/%s:generateContent?key=%s", baseURL, geminiModel, key)
 		}
 
 		httpReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, bytes.NewReader(geminiBody))
@@ -452,20 +461,19 @@ func (h *ResponsesHandler) handleGeminiResponses(c *gin.Context, origBody []byte
 			return
 		}
 
-		if resp.StatusCode == 429 && selector.HasNext() {
-			keyIdx := selector.Index()
+		if resp.StatusCode == 429 && attempt+1 < keyCount {
 			resp.Body.Close()
 			h.logger.Warn("responses gemini rate limited (429), switching to next key",
 				zap.Int("from_key_index", keyIdx),
-				zap.Int("to_key_index", keyIdx+1),
+				zap.Int("to_key_index", (keyIdx+1)%keyCount),
 			)
-			selector.Next()
+			keyIdx = h.forwarder.AdvanceKey(provider.ID, keyCount)
+			attempt++
 			continue
 		}
 
-		c.Set("provider_key_index", selector.Index())
+		c.Set("provider_key_index", keyIdx)
 		defer resp.Body.Close()
-		h.forwarder.AdvanceKeyOffset(provider.ID, selector.Index(), keyCount)
 
 		if respReq.Stream {
 			h.streamGeminiToResponses(c, resp.Body, respID, msgID, upstreamModel)

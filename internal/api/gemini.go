@@ -321,15 +321,20 @@ func (h *GeminiHandler) ChatCompletions(c *gin.Context) {
 
 	baseURL := strings.TrimRight(provider.BaseURL, "/")
 
-	selector := h.forwarder.NewOffsetKeySelector(provider)
-	keyCount := selector.Len()
+	keyCount := len(provider.Keys)
+	if keyCount == 0 {
+		keyCount = 1
+	}
+	keyIdx := h.forwarder.GetCurrentKeyIndex(provider.ID)
 
-	for {
+	for attempt := 0; attempt < keyCount; {
+		key := proxy.ProviderKeyAt(provider, keyIdx)
+
 		var targetURL string
 		if reqBody.Stream {
-			targetURL = fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse&key=%s", baseURL, modelName, selector.Current())
+			targetURL = fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse&key=%s", baseURL, modelName, key)
 		} else {
-			targetURL = fmt.Sprintf("%s/models/%s:generateContent?key=%s", baseURL, modelName, selector.Current())
+			targetURL = fmt.Sprintf("%s/models/%s:generateContent?key=%s", baseURL, modelName, key)
 		}
 
 		httpReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, bytes.NewReader(geminiBody))
@@ -347,20 +352,19 @@ func (h *GeminiHandler) ChatCompletions(c *gin.Context) {
 			return
 		}
 
-		if resp.StatusCode == 429 && selector.HasNext() {
-			keyIdx := selector.Index()
+		if resp.StatusCode == 429 && attempt+1 < keyCount {
 			resp.Body.Close()
 			h.logger.Warn("gemini rate limited (429), switching to next key",
 				zap.Int("from_key_index", keyIdx),
-				zap.Int("to_key_index", keyIdx+1),
+				zap.Int("to_key_index", (keyIdx+1)%keyCount),
 			)
-			selector.Next()
+			keyIdx = h.forwarder.AdvanceKey(provider.ID, keyCount)
+			attempt++
 			continue
 		}
 
-		c.Set("provider_key_index", selector.Index())
+		c.Set("provider_key_index", keyIdx)
 		defer resp.Body.Close()
-		h.forwarder.AdvanceKeyOffset(provider.ID, selector.Index(), keyCount)
 
 		if reqBody.Stream || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
 			c.Header("Content-Type", "text/event-stream")
