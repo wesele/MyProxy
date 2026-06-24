@@ -301,9 +301,7 @@ function loadStats() {
             renderModelTable(data);
             populateModelSelect();
             renderCharts(data, model);
-if (model) {
-    loadModelLogs(model);
-}
+loadModelLogs(model);
             document.getElementById('refresh-status').textContent = 'Updated ' + new Date().toLocaleTimeString();
         })
         .catch(() => {
