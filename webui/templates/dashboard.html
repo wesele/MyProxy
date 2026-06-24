@@ -140,14 +140,14 @@
             <thead>
                 <tr>
                     <th>Token</th>
+                    <th>Key Idx</th>
                     <th>Time</th>
-                    <th>Type</th>
+                    <th>Model</th>
                     <th>Status</th>
                     <th>Latency</th>
                     <th>Input</th>
                     <th>Output</th>
                     <th>Cache</th>
-                    <th>Key Idx</th>
                     <th>Request Summary</th>
                     <th>Response Summary</th>
                 </tr>
@@ -372,7 +372,7 @@ function renderModelTable(data) {
             <td class="num">${(m.total_requests || 0).toLocaleString()}</td>
             <td class="num" style="color:${m.error_count > 0 ? '#e63946' : '#888'}">${m.error_count || 0}</td>
             <td class="num">${avgLat}</td>
-            <td class="num">${(m.prompt_tokens || 0).toLocaleString()}</td>
+            <td class="num">${((m.prompt_tokens || 0) - (m.input_cache_tokens || 0)).toLocaleString()}</td>
             <td class="num">${(m.completion_tokens || 0).toLocaleString()}</td>
             <td class="num" style="color:#b8860b">${(m.input_cache_tokens || 0).toLocaleString()}</td>
             <td class="num">${tps}</td>
@@ -413,14 +413,14 @@ function loadModelLogs(model) {
                 const resSum = l.response_summary || '-';
                 return `<tr>
                     <td style="font-size:11px;color:#555;white-space:nowrap;max-width:100px;overflow:hidden;text-overflow:ellipsis;" title="${(l.api_key_name || '').replace(/"/g,'&quot;')}">${l.api_key_name || '-'}</td>
+                    <td class="num">${l.provider_key_index != null ? l.provider_key_index : '-'}</td>
                     <td style="font-size:11px;color:#888;white-space:nowrap">${time}</td>
-                    <td><span style="font-size:11px;color:#666">${l.request_type || 'chat'}</span></td>
+                    <td><span style="font-size:11px;color:#666">${l.model || l.request_type || 'chat'}</span></td>
                     <td>${statusBadge} ${l.status_code}</td>
                     <td class="num">${l.latency_ms}ms</td>
                     <td class="num">${(l.prompt_tokens || 0).toLocaleString()}</td>
                     <td class="num">${(l.completion_tokens || 0).toLocaleString()}</td>
                     <td class="num" style="color:#b8860b">${(l.input_cache_tokens || 0).toLocaleString()}</td>
-                    <td class="num">${l.provider_key_index != null ? l.provider_key_index : '-'}</td>
                     <td class="req-col" title="${reqSum.replace(/"/g,'&quot;')}">${reqSum}</td>
                     <td class="res-col" title="${resSum.replace(/"/g,'&quot;')}">${resSum}</td>
                 </tr>`;
