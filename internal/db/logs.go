@@ -223,19 +223,38 @@ func (s *SQLiteStore) GetModelLogs(model string, start, end time.Time, limit int
 	startStr := start.UTC().Format(time.RFC3339Nano)
 	endStr := end.UTC().Format(time.RFC3339Nano)
 
-	query := `SELECT rl.id, rl.request_id, rl.model, rl.request_type,
-		rl.prompt_tokens, rl.completion_tokens, rl.input_cache_tokens,
-		rl.latency_ms, rl.status_code, rl.is_error,
-		COALESCE(rl.request_summary, ''), COALESCE(rl.response_summary, ''),
-		rl.created_at,
-		COALESCE(NULLIF(rl.api_key_name, ''), ak.name, '') as api_key_name,
-		rl.provider_key_index
-		FROM request_logs rl
-		LEFT JOIN api_keys ak ON rl.api_key_id = ak.id
-		WHERE rl.created_at >= ? AND rl.created_at <= ? AND rl.model = ?
-		ORDER BY rl.created_at DESC LIMIT ?`
+	var query string
+	var args []interface{}
 
-	rows, err := s.db.Query(query, startStr, endStr, model, limit)
+	if model == "" {
+		query = `SELECT rl.id, rl.request_id, rl.model, rl.request_type,
+			rl.prompt_tokens, rl.completion_tokens, rl.input_cache_tokens,
+			rl.latency_ms, rl.status_code, rl.is_error,
+			COALESCE(rl.request_summary, ''), COALESCE(rl.response_summary, ''),
+			rl.created_at,
+			COALESCE(NULLIF(rl.api_key_name, ''), ak.name, '') as api_key_name,
+			rl.provider_key_index
+			FROM request_logs rl
+			LEFT JOIN api_keys ak ON rl.api_key_id = ak.id
+			WHERE rl.created_at >= ? AND rl.created_at <= ?
+			ORDER BY rl.created_at DESC LIMIT ?`
+		args = []interface{}{startStr, endStr, limit}
+	} else {
+		query = `SELECT rl.id, rl.request_id, rl.model, rl.request_type,
+			rl.prompt_tokens, rl.completion_tokens, rl.input_cache_tokens,
+			rl.latency_ms, rl.status_code, rl.is_error,
+			COALESCE(rl.request_summary, ''), COALESCE(rl.response_summary, ''),
+			rl.created_at,
+			COALESCE(NULLIF(rl.api_key_name, ''), ak.name, '') as api_key_name,
+			rl.provider_key_index
+			FROM request_logs rl
+			LEFT JOIN api_keys ak ON rl.api_key_id = ak.id
+			WHERE rl.created_at >= ? AND rl.created_at <= ? AND rl.model = ?
+			ORDER BY rl.created_at DESC LIMIT ?`
+		args = []interface{}{startStr, endStr, model, limit}
+	}
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

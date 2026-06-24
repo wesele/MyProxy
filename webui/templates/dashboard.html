@@ -352,11 +352,7 @@ function onModelChange() {
     selectedModel = document.getElementById('model-select').value;
     const hours = document.getElementById('hours-select').value;
     saveDashboardState();
-    if (selectedModel) {
-        loadModelLogs(selectedModel);
-    } else {
-        closeLogPanel();
-    }
+    loadModelLogs(selectedModel);
     loadStats();
 }
 

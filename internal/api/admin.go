@@ -1135,10 +1135,6 @@ func (h *AdminHandler) GetStats(c *gin.Context) {
 
 func (h *AdminHandler) GetModelLogs(c *gin.Context) {
 	model := c.Query("model")
-	if model == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "model query param required"})
-		return
-	}
 
 	startStr := c.Query("start")
 	endStr := c.Query("end")
