@@ -2,7 +2,9 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -15,16 +17,26 @@ import (
 )
 
 type Forwarder struct {
-	client      *http.Client
-	logger      *zap.Logger
-	keyIndexMap sync.Map // provider ID -> current key index
+	client            *http.Client
+	logger            *zap.Logger
+	keyIndexMap       sync.Map // provider ID -> current key index
+	virtualModelIndex sync.Map // "providerID:modelName" -> current target index
+}
+
+// NewHTTPClient creates an http.Client with TLS verification disabled
+// to handle self-signed or mismatched certificates on upstream APIs.
+func NewHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
 }
 
 func NewForwarder(logger *zap.Logger) *Forwarder {
 	return &Forwarder{
-		client: &http.Client{
-			Timeout: 5 * time.Minute,
-		},
+		client: NewHTTPClient(5 * time.Minute),
 		logger: logger,
 	}
 }
@@ -225,6 +237,71 @@ func MergeExtraBody(body []byte, extraBody map[string]interface{}) []byte {
 	return merged
 }
 
+func (f *Forwarder) writeUpstreamResp(c *gin.Context, resp *http.Response, originalBody []byte, isStream bool) {
+	defer resp.Body.Close()
+
+	for k, v := range resp.Header {
+		for _, vv := range v {
+			c.Header(k, vv)
+		}
+	}
+
+	if isStream || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		c.Set("proxy_streaming", true)
+		c.Writer.WriteHeader(resp.StatusCode)
+		sw := &sseWriter{writer: c.Writer, buf: make([]byte, 0, 4096)}
+		flusher, canFlush := c.Writer.(http.Flusher)
+		buf := make([]byte, 4096)
+		for {
+			n, err := resp.Body.Read(buf)
+			if n > 0 {
+				sw.Write(buf[:n])
+				if canFlush {
+					flusher.Flush()
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
+		pt, ct, ict := ParseTokens(sw.lastUsage)
+		if pt+ct+ict == 0 {
+			pt = estimatePromptTokens(originalBody)
+		}
+		if ct == 0 && sw.content.Len() > 0 {
+			ct = sw.content.Len() / 4
+		}
+		if pt+ct+ict > 0 {
+			c.Set("proxy_prompt_tokens", pt)
+			c.Set("proxy_completion_tokens", ct)
+			c.Set("proxy_input_cache_tokens", ict)
+		}
+		return
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
+		return
+	}
+
+	pt, ct, ict := ParseTokens(respBody)
+	if pt+ct+ict == 0 {
+		pt = estimatePromptTokens(originalBody)
+		if ct == 0 {
+			ct = estimateCompletionTokens(respBody)
+		}
+	}
+	if pt+ct+ict > 0 {
+		c.Set("proxy_prompt_tokens", pt)
+		c.Set("proxy_completion_tokens", ct)
+		c.Set("proxy_input_cache_tokens", ict)
+	}
+
+	c.Set("response_summary", ExtractResponseSummary(respBody))
+	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
+}
+
 func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path string) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -304,72 +381,196 @@ func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path stri
 
 		c.Set("provider_key_index", keyIdx)
 
-		defer resp.Body.Close()
-
-		for k, v := range resp.Header {
-			for _, vv := range v {
-				c.Header(k, vv)
-			}
-		}
-
-		if isStream || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
-			c.Set("proxy_streaming", true)
-			c.Writer.WriteHeader(resp.StatusCode)
-			sw := &sseWriter{writer: c.Writer, buf: make([]byte, 0, 4096)}
-			flusher, canFlush := c.Writer.(http.Flusher)
-			buf := make([]byte, 4096)
-			for {
-				n, err := resp.Body.Read(buf)
-				if n > 0 {
-					sw.Write(buf[:n])
-					if canFlush {
-						flusher.Flush()
-					}
-				}
-				if err != nil {
-					break
-				}
-			}
-			pt, ct, ict := ParseTokens(sw.lastUsage)
-			if pt+ct+ict == 0 {
-				pt = estimatePromptTokens(body)
-			}
-			if ct == 0 && sw.content.Len() > 0 {
-				ct = sw.content.Len() / 4
-			}
-			if pt+ct+ict > 0 {
-				c.Set("proxy_prompt_tokens", pt)
-				c.Set("proxy_completion_tokens", ct)
-				c.Set("proxy_input_cache_tokens", ict)
-			}
-			return
-		}
-
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-			return
-		}
-
-		pt, ct, ict := ParseTokens(respBody)
-		if pt+ct+ict == 0 {
-			pt = estimatePromptTokens(body)
-			if ct == 0 {
-				ct = estimateCompletionTokens(respBody)
-			}
-		}
-		if pt+ct+ict > 0 {
-			c.Set("proxy_prompt_tokens", pt)
-			c.Set("proxy_completion_tokens", ct)
-			c.Set("proxy_input_cache_tokens", ict)
-		}
-
-		// Store response summary
-		c.Set("response_summary", ExtractResponseSummary(respBody))
-
-		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
+		f.writeUpstreamResp(c, resp, body, isStream)
 		return
 	}
+}
+
+// virtualModelKey generates a key for the virtual model index map.
+func virtualModelKey(providerID int64, modelName string) string {
+	return fmt.Sprintf("%d:%s", providerID, modelName)
+}
+
+// getVirtualModelIndex returns the current target index for a virtual model.
+func (f *Forwarder) getVirtualModelIndex(providerID int64, modelName string) int {
+	key := virtualModelKey(providerID, modelName)
+	if val, ok := f.virtualModelIndex.Load(key); ok {
+		return val.(int)
+	}
+	return 0
+}
+
+// advanceVirtualModelIndex advances to the next target index (wraps around).
+func (f *Forwarder) advanceVirtualModelIndex(providerID int64, modelName string, targetCount int) int {
+	if targetCount <= 1 {
+		return 0
+	}
+	current := f.getVirtualModelIndex(providerID, modelName)
+	next := (current + 1) % targetCount
+	f.virtualModelIndex.Store(virtualModelKey(providerID, modelName), next)
+	return next
+}
+
+// ForwardVirtual forwards a request through a virtual model.
+// It iterates through the target model list, and on 429 rotates to the next target.
+func (f *Forwarder) ForwardVirtual(c *gin.Context, router *Router, provider *models.Provider,
+	virtualModel string, targets []string, path string, body []byte) {
+
+	if len(targets) == 0 {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "virtual model has no targets"})
+		return
+	}
+
+	c.Set("request_summary", ExtractRequestSummary(body))
+
+	var reqBody struct {
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
+	}
+	isStream := false
+	json.Unmarshal(body, &reqBody)
+	if reqBody.Stream {
+		isStream = true
+	}
+
+	targetCount := len(targets)
+	startIdx := f.getVirtualModelIndex(provider.ID, virtualModel)
+
+	for attempt := 0; attempt < targetCount; attempt++ {
+		idx := (startIdx + attempt) % targetCount
+		targetID := targets[idx]
+		attemptLog := zap.String("target", targetID)
+
+		// Resolve target provider
+		targetProvider, err := router.FindProvider(targetID)
+		if err != nil {
+			f.logger.Warn("virtual target provider not found, skipping", attemptLog)
+			continue
+		}
+
+		// Determine upstream model name from targetID
+		targetModelName := targetID
+		prefix := targetProvider.Name + "."
+		if strings.HasPrefix(targetModelName, prefix) {
+			targetModelName = targetModelName[len(prefix):]
+		}
+
+		// Skip if target is itself virtual (prevent recursion)
+		if mc := FindModelConfig(targetProvider, targetModelName); mc != nil && mc.IsVirtual() {
+			f.logger.Warn("virtual target is itself virtual, skipping", attemptLog)
+			continue
+		}
+
+		// Resolve upstream model name (DisplayName -> Name)
+		upstreamModel := targetModelName
+		for _, m := range targetProvider.Models {
+			if m.DisplayName == targetModelName && m.Name != targetModelName {
+				upstreamModel = m.Name
+				break
+			}
+		}
+
+		// Modify request body to use target's upstream model
+		var modifiedBody []byte
+		var bodyMap map[string]interface{}
+		if err := json.Unmarshal(body, &bodyMap); err == nil {
+			bodyMap["model"] = upstreamModel
+			modifiedBody, _ = json.Marshal(bodyMap)
+		} else {
+			modifiedBody = body
+		}
+
+		// Merge model-specific extra_body
+		if mc := FindModelConfig(targetProvider, targetModelName); mc != nil && mc.ExtraBody != nil {
+			modifiedBody = MergeExtraBody(modifiedBody, mc.ExtraBody)
+		}
+
+		// Update context for logging
+		c.Set("provider_id", targetProvider.ID)
+
+		// Build target URL
+		targetURL := strings.TrimRight(targetProvider.BaseURL, "/") + path
+
+		// Key rotation for this target provider
+		keyCount := len(targetProvider.Keys)
+		if keyCount == 0 {
+			keyCount = 1
+		}
+		keyIdx := f.GetCurrentKeyIndex(targetProvider.ID)
+
+		allKeysExhausted := true
+		for keyAttempt := 0; keyAttempt < keyCount; {
+			key := ProviderKeyAt(targetProvider, keyIdx)
+
+			httpReq, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, targetURL, bytes.NewReader(modifiedBody))
+			if err != nil {
+				f.logger.Error("virtual target: failed to create request", zap.Error(err))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create request"})
+				return
+			}
+
+			if targetProvider.ProviderType == "anthropic" {
+				httpReq.Header.Set("x-api-key", key)
+				httpReq.Header.Set("anthropic-version", "2023-06-01")
+			} else if targetProvider.ProviderType == "gemini" {
+				// Gemini uses API key as query param, handled in gemini.go
+			} else {
+				httpReq.Header.Set("Authorization", "Bearer "+key)
+			}
+			httpReq.Header.Set("Content-Type", "application/json")
+
+			for k := range c.Request.Header {
+				if k == "Authorization" || k == "Content-Type" {
+					continue
+				}
+				httpReq.Header.Set(k, c.Request.Header.Get(k))
+			}
+
+			resp, err := f.client.Do(httpReq)
+			if err != nil {
+				f.logger.Error("virtual target: upstream request failed", zap.Error(err))
+				c.JSON(http.StatusBadGateway, gin.H{"error": "upstream request failed: " + err.Error()})
+				return
+			}
+
+			if resp.StatusCode == 429 {
+				resp.Body.Close()
+				if keyAttempt+1 < keyCount {
+					f.logger.Warn("virtual target rate limited (429), switching to next key",
+						attemptLog,
+						zap.Int("from_key_index", keyIdx),
+						zap.Int("to_key_index", (keyIdx+1)%keyCount),
+					)
+					keyIdx = f.AdvanceKey(targetProvider.ID, keyCount)
+					keyAttempt++
+					continue
+				}
+				// All keys for this target exhausted
+				f.logger.Warn("virtual target all keys rate limited, switching to next target", attemptLog)
+				break
+			}
+
+			// Success - save virtual model index for next-request round-robin
+			f.virtualModelIndex.Store(virtualModelKey(provider.ID, virtualModel), idx)
+			allKeysExhausted = false
+
+			c.Set("provider_key_index", keyIdx)
+
+			f.writeUpstreamResp(c, resp, body, isStream)
+			return
+		}
+
+		if allKeysExhausted {
+			f.logger.Warn("virtual target exhausted, trying next",
+				attemptLog,
+				zap.Int("target_index", idx),
+				zap.Int("remaining_targets", targetCount-attempt-1),
+			)
+		}
+	}
+
+	// All targets exhausted
+	c.JSON(http.StatusTooManyRequests, gin.H{"error": "all virtual model targets returned 429"})
 }
 
 type openAIUsageDetails struct {

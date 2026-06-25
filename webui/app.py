@@ -270,6 +270,24 @@ def provider_api_key(pid):
     return jsonify(result)
 
 
+@app.route("/admin/api/models-list")
+def models_list():
+    """Return all models across all providers (for virtual model target selection)."""
+    providers = api_call("GET", "/providers")
+    result = []
+    for p in providers:
+        provider_name = p.get("name", "")
+        for m in p.get("models", []):
+            model_id = f"{provider_name}.{m.get('display_name', m['name'])}"
+            result.append({
+                "id": model_id,
+                "provider": provider_name,
+                "model": m.get("name"),
+                "display_name": m.get("display_name", m.get("name")),
+            })
+    return jsonify(result)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("FLASK_PORT", 5100))
     app.run(host="127.0.0.1", port=port, debug=False)

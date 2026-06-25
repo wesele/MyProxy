@@ -129,6 +129,12 @@ func (h *OpenAIHandler) ChatCompletions(c *gin.Context) {
 
 	c.Set("provider_id", provider.ID)
 
+	// Check if this is a virtual model — if so, forward through virtual model targets
+	if mc := proxy.FindModelConfig(provider, modelName); mc != nil && mc.IsVirtual() {
+		h.forwarder.ForwardVirtual(c, h.router, provider, modelName, mc.VirtualTargets, "/chat/completions", body)
+		return
+	}
+
 	var finalBody []byte
 	if upstreamModel != reqBody.Model {
 		var bodyMap map[string]interface{}

@@ -17,6 +17,11 @@ type ModelConfig struct {
 	InputPrice      float64                `json:"input_price,omitempty"`
 	OutputPrice     float64                `json:"output_price,omitempty"`
 	InputCachePrice float64                `json:"input_cache_price,omitempty"`
+	VirtualTargets  []string               `json:"virtual_targets,omitempty"`
+}
+
+func (m *ModelConfig) IsVirtual() bool {
+	return len(m.VirtualTargets) > 0
 }
 
 type ProviderKey struct {

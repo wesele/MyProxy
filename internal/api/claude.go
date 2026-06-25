@@ -72,6 +72,12 @@ func (h *ClaudeHandler) Messages(c *gin.Context) {
 
 	c.Set("provider_id", provider.ID)
 
+	// Check if this is a virtual model
+	if mc := proxy.FindModelConfig(provider, modelName); mc != nil && mc.IsVirtual() {
+		h.forwarder.ForwardVirtual(c, h.router, provider, modelName, mc.VirtualTargets, "/messages", body)
+		return
+	}
+
 	var finalBody []byte
 	if upstreamModel != model {
 		var bodyMap map[string]interface{}

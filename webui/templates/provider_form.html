@@ -77,38 +77,63 @@
                             <input type="text" id="config-display-name" placeholder="e.g. GPT-4o Latest">
                         </div>
                         <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
-                        <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:#555">Context Parameters</h3>
-                        <div class="form-group">
-                            <label>Max Output Tokens</label>
-                            <input type="number" id="config-max-tokens" placeholder="e.g. 4096" min="0">
+                        <div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+                            <input type="checkbox" id="config-virtual-toggle" onchange="toggleVirtualConfig()" style="width:16px;height:16px;cursor:pointer">
+                            <label for="config-virtual-toggle" style="margin:0;font-weight:600;cursor:pointer;font-size:14px">Virtual Model</label>
+                            <span style="font-weight:normal;color:#999;font-size:12px">(forwards to target models with 429 failover)</span>
                         </div>
-                        <div class="form-group">
-                            <label>Max Input / Context Window <span style="font-weight:normal;color:#999">(max input tokens)</span></label>
-                            <input type="number" id="config-max-input-tokens" placeholder="e.g. 128000" min="0">
-                        </div>
-                        <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
-                        <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:#555">
-                            Extra Body JSON
-                            <span style="font-weight:normal;color:#999;font-size:12px">(merged into every request)</span>
-                        </h3>
-                        <div class="form-group">
-                            <textarea id="config-extra-body" rows="4" style="font-family:monospace;font-size:12px" placeholder='e.g.&#10;{&#10;  &quot;thinking&quot;: {&quot;type&quot;: &quot;enabled&quot;, &quot;budget_tokens&quot;: 16000}&#10;}'></textarea>
-                        </div>
-                        <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
-                        <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:#555">Token Pricing (per 1M tokens)</h3>
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-                            <div class="form-group" style="margin:0">
-                                <label>Input Price</label>
-                                <input type="number" id="config-input-price" step="0.001" min="0" placeholder="e.g. 2.50">
-                            </div>
-                            <div class="form-group" style="margin:0">
-                                <label>Output Price</label>
-                                <input type="number" id="config-output-price" step="0.001" min="0" placeholder="e.g. 10.00">
+
+                        <div id="config-virtual-section" style="display:none">
+                            <div class="form-group">
+                                <label>Target Models</label>
+                                <div id="config-target-list" style="border:1px solid #e0e0e0;border-radius:6px;padding:8px;min-height:46px;margin-bottom:8px;background:#fafafa;display:flex;flex-wrap:wrap;gap:4px;align-content:flex-start">
+                                    <span style="color:#999;font-size:13px;padding:4px" id="config-target-empty">No targets selected</span>
+                                </div>
+                                <div style="display:flex;gap:6px;align-items:center">
+                                    <select id="config-target-select" style="flex:1;padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;background:#fff">
+                                        <option value="">-- Select target model --</option>
+                                    </select>
+                                    <button type="button" class="btn btn-sm" style="background:#4361ee;color:#fff;white-space:nowrap" onclick="addVirtualTarget()">Add</button>
+                                    <button type="button" class="btn btn-sm" style="background:#eee" onclick="refreshTargetList()" title="Refresh target list">↻</button>
+                                </div>
                             </div>
                         </div>
-                        <div class="form-group" style="margin-top:8px">
-                            <label>Input Cache Price <span style="font-weight:normal;color:#999">(cached input, if applicable)</span></label>
-                            <input type="number" id="config-input-cache-price" step="0.001" min="0" placeholder="e.g. 1.25">
+
+                        <div id="config-regular-section">
+                            <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+                            <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:#555">Context Parameters</h3>
+                            <div class="form-group">
+                                <label>Max Output Tokens</label>
+                                <input type="number" id="config-max-tokens" placeholder="e.g. 4096" min="0">
+                            </div>
+                            <div class="form-group">
+                                <label>Max Input / Context Window <span style="font-weight:normal;color:#999">(max input tokens)</span></label>
+                                <input type="number" id="config-max-input-tokens" placeholder="e.g. 128000" min="0">
+                            </div>
+                            <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+                            <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:#555">
+                                Extra Body JSON
+                                <span style="font-weight:normal;color:#999;font-size:12px">(merged into every request)</span>
+                            </h3>
+                            <div class="form-group">
+                                <textarea id="config-extra-body" rows="4" style="font-family:monospace;font-size:12px" placeholder='e.g.&#10;{&#10;  &quot;thinking&quot;: {&quot;type&quot;: &quot;enabled&quot;, &quot;budget_tokens&quot;: 16000}&#10;}'></textarea>
+                            </div>
+                            <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+                            <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:#555">Token Pricing (per 1M tokens)</h3>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                                <div class="form-group" style="margin:0">
+                                    <label>Input Price</label>
+                                    <input type="number" id="config-input-price" step="0.001" min="0" placeholder="e.g. 2.50">
+                                </div>
+                                <div class="form-group" style="margin:0">
+                                    <label>Output Price</label>
+                                    <input type="number" id="config-output-price" step="0.001" min="0" placeholder="e.g. 10.00">
+                                </div>
+                            </div>
+                            <div class="form-group" style="margin-top:8px">
+                                <label>Input Cache Price <span style="font-weight:normal;color:#999">(cached input, if applicable)</span></label>
+                                <input type="number" id="config-input-cache-price" step="0.001" min="0" placeholder="e.g. 1.25">
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -333,6 +358,7 @@
 let models = [];
 let selectedModelId = null;
 let keys = [];
+let allAvailableTargets = [];
 
 function genId() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -355,6 +381,8 @@ function initFromProvider() {
     syncModelsJSON();
     renderKeys();
     syncKeysJSON();
+    // Preload available target models for virtual model config
+    refreshTargetList();
 }
 
 // ======== Keys Management ========
@@ -511,7 +539,8 @@ function addModel() {
         input_price: 0,
         output_price: 0,
         input_cache_price: 0,
-        extra_body: null
+        extra_body: null,
+        virtual_targets: []
     });
     renderModelsLeft();
     syncModelsJSON();
@@ -535,6 +564,12 @@ function showModelConfig(m) {
     } catch(e) {
         document.getElementById('config-extra-body').value = '';
     }
+
+    // Virtual model toggle
+    const isVirtual = m.virtual_targets && m.virtual_targets.length > 0;
+    document.getElementById('config-virtual-toggle').checked = isVirtual;
+    toggleVirtualConfig();
+    renderTargetList(m);
 }
 
 function saveCurrentModelConfig() {
@@ -543,21 +578,34 @@ function saveCurrentModelConfig() {
     if (!m) return;
 
     m.display_name = document.getElementById('config-display-name').value.trim() || m.name;
-    m.max_tokens = parseInt(document.getElementById('config-max-tokens').value) || 0;
-    m.max_input_tokens = parseInt(document.getElementById('config-max-input-tokens').value) || 0;
-    m.input_price = parseFloat(document.getElementById('config-input-price').value) || 0;
-    m.output_price = parseFloat(document.getElementById('config-output-price').value) || 0;
-    m.input_cache_price = parseFloat(document.getElementById('config-input-cache-price').value) || 0;
 
-    const extraBodyStr = document.getElementById('config-extra-body').value.trim();
-    if (extraBodyStr) {
-        try {
-            m.extra_body = JSON.parse(extraBodyStr);
-        } catch(e) {
-            // invalid JSON while editing — just don't update
-        }
-    } else {
+    const isVirtual = document.getElementById('config-virtual-toggle').checked;
+    if (isVirtual) {
+        m.virtual_targets = m.virtual_targets || [];
+        m.max_tokens = 0;
+        m.max_input_tokens = 0;
+        m.input_price = 0;
+        m.output_price = 0;
+        m.input_cache_price = 0;
         m.extra_body = null;
+    } else {
+        m.virtual_targets = [];
+        m.max_tokens = parseInt(document.getElementById('config-max-tokens').value) || 0;
+        m.max_input_tokens = parseInt(document.getElementById('config-max-input-tokens').value) || 0;
+        m.input_price = parseFloat(document.getElementById('config-input-price').value) || 0;
+        m.output_price = parseFloat(document.getElementById('config-output-price').value) || 0;
+        m.input_cache_price = parseFloat(document.getElementById('config-input-cache-price').value) || 0;
+
+        const extraBodyStr = document.getElementById('config-extra-body').value.trim();
+        if (extraBodyStr) {
+            try {
+                m.extra_body = JSON.parse(extraBodyStr);
+            } catch(e) {
+                // invalid JSON while editing — just don't update
+            }
+        } else {
+            m.extra_body = null;
+        }
     }
 
     renderModelsLeft();
@@ -591,6 +639,9 @@ document.addEventListener('input', function(e) {
     const f = ['config-display-name','config-max-tokens','config-max-input-tokens','config-input-price','config-output-price','config-input-cache-price','config-extra-body'];
     if (f.includes(e.target.id)) saveCurrentModelConfig();
 });
+document.addEventListener('change', function(e) {
+    if (e.target.id === 'config-virtual-toggle') saveCurrentModelConfig();
+});
 
 // ======== Sync to Hidden Field ========
 function syncModelsJSON() {
@@ -600,15 +651,101 @@ function syncModelsJSON() {
             name: m.name,
             display_name: m.display_name || m.name,
         };
-        if (m.max_tokens) o.max_tokens = m.max_tokens;
-        if (m.max_input_tokens) o.max_input_tokens = m.max_input_tokens;
-        if (m.extra_body) o.extra_body = m.extra_body;
-        if (m.input_price) o.input_price = m.input_price;
-        if (m.output_price) o.output_price = m.output_price;
-        if (m.input_cache_price) o.input_cache_price = m.input_cache_price;
+        if (m.virtual_targets && m.virtual_targets.length > 0) {
+            o.virtual_targets = m.virtual_targets;
+        } else {
+            if (m.max_tokens) o.max_tokens = m.max_tokens;
+            if (m.max_input_tokens) o.max_input_tokens = m.max_input_tokens;
+            if (m.extra_body) o.extra_body = m.extra_body;
+            if (m.input_price) o.input_price = m.input_price;
+            if (m.output_price) o.output_price = m.output_price;
+            if (m.input_cache_price) o.input_cache_price = m.input_cache_price;
+        }
         return o;
     });
     document.getElementById('models_json').value = JSON.stringify(out);
+}
+
+// ======== Virtual Model Management ========
+function toggleVirtualConfig() {
+    const isVirtual = document.getElementById('config-virtual-toggle').checked;
+    document.getElementById('config-virtual-section').style.display = isVirtual ? 'block' : 'none';
+    document.getElementById('config-regular-section').style.display = isVirtual ? 'none' : 'block';
+    if (isVirtual) {
+        refreshTargetList();
+    }
+}
+
+function renderTargetList(m) {
+    const container = document.getElementById('config-target-list');
+    const targets = (m && m.virtual_targets) || [];
+    container.innerHTML = '';
+    if (targets.length === 0) {
+        container.innerHTML = '<span style="color:#999;font-size:13px;padding:4px" id="config-target-empty">No targets selected</span>';
+        return;
+    }
+    targets.forEach((t, idx) => {
+        const chip = document.createElement('span');
+        chip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:3px 8px;background:#e8edff;border:1px solid #d2dbff;border-radius:12px;font-size:13px;color:#333';
+        const text = document.createElement('span');
+        text.textContent = t;
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.innerHTML = '&times;';
+        del.style.cssText = 'font-size:14px;color:#666;background:none;border:none;cursor:pointer;padding:0 2px;line-height:1';
+        del.title = 'Remove target';
+        del.addEventListener('click', () => {
+            targets.splice(idx, 1);
+            if (m) m.virtual_targets = targets;
+            renderTargetList(m);
+            saveCurrentModelConfig();
+        });
+        chip.appendChild(text);
+        chip.appendChild(del);
+        container.appendChild(chip);
+    });
+}
+
+async function refreshTargetList() {
+    const select = document.getElementById('config-target-select');
+    select.innerHTML = '<option value="">-- Select target model --</option>';
+    try {
+        const resp = await fetch('/admin/api/models-list');
+        const data = await resp.json();
+        allAvailableTargets = data || [];
+        // Exclude currently-selected model from target options
+        const currentModelName = document.getElementById('config-model-name').value;
+        data.forEach(t => {
+            // Don't include the model itself as a target
+            if (t.model === currentModelName) return;
+            const opt = document.createElement('option');
+            opt.value = t.id;
+            opt.textContent = t.id;
+            select.appendChild(opt);
+        });
+    } catch(e) {
+        console.error('Failed to load target models', e);
+    }
+}
+
+function addVirtualTarget() {
+    const select = document.getElementById('config-target-select');
+    const val = select.value;
+    if (!val) return;
+    if (!selectedModelId) return;
+
+    const m = models.find(x => x.id === selectedModelId);
+    if (!m) return;
+
+    m.virtual_targets = m.virtual_targets || [];
+    if (m.virtual_targets.includes(val)) {
+        select.value = '';
+        return; // already added
+    }
+    m.virtual_targets.push(val);
+    select.value = '';
+    renderTargetList(m);
+    saveCurrentModelConfig();
 }
 
 // ======== Fetch Models ========
