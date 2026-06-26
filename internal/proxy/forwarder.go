@@ -250,12 +250,15 @@ func MergeExtraBody(body []byte, extraBody map[string]interface{}) []byte {
 	if len(extraBody) == 0 {
 		return body
 	}
-	var reqMap map[string]interface{}
+	var reqMap map[string]json.RawMessage
 	if err := json.Unmarshal(body, &reqMap); err != nil {
 		return body
 	}
 	for k, v := range extraBody {
-		reqMap[k] = v
+		raw, err := json.Marshal(v)
+		if err == nil {
+			reqMap[k] = json.RawMessage(raw)
+		}
 	}
 	merged, _ := json.Marshal(reqMap)
 	return merged
@@ -538,11 +541,13 @@ func (f *Forwarder) ForwardVirtual(c *gin.Context, router *Router, provider *mod
 			entry.(*middleware.LogEntry).Model = virtualModel + "." + targetID
 		}
 
-		// Modify request body to use target's upstream model
+		// Modify request body to use target's upstream model.
+		// Use json.RawMessage to preserve original byte representation of all fields
+		// except "model", so that nested content (messages, tools, etc.) is untouched.
 		var modifiedBody []byte
-		var bodyMap map[string]interface{}
+		var bodyMap map[string]json.RawMessage
 		if err := json.Unmarshal(body, &bodyMap); err == nil {
-			bodyMap["model"] = upstreamModel
+			bodyMap["model"] = json.RawMessage(`"` + upstreamModel + `"`)
 			modifiedBody, _ = json.Marshal(bodyMap)
 		} else {
 			modifiedBody = body
