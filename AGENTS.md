@@ -24,7 +24,13 @@
 - **所有修改完成后必须测试**：
 
 ### 5. 编译与重启
-- 修改涉及 Go 后端代码，自动重新编译并提示用户重启服务端。
+- 修改涉及 Go 后端代码，自动重新编译。
+- 编译成功后，检查是否有正在运行的 `qwenportal.exe` 进程：`Get-Process qwenportal -ErrorAction SilentlyContinue`
+- 如果进程存在，自动执行重启：
+  1. `Stop-Process -Name qwenportal -Force`
+  2. 等待 1-2 秒确保端口释放
+  3. 后台启动新进程：`Start-Process -NoNewWindow -FilePath ".\qwenportal.exe"`
+- 如果进程不存在，提示用户手动启动。
 
 
 ### 6. 提交
