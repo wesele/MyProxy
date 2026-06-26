@@ -560,7 +560,11 @@ func (f *Forwarder) ForwardVirtual(c *gin.Context, router *Router, provider *mod
 
 		// Check target model's RPM limit (skip to next target if rate limited)
 		if mc := FindModelConfig(targetProvider, targetModelName); mc != nil && mc.RPM > 0 {
-			if !f.checkModelRPM(targetProvider.ID, mc.Name, mc.RPM) {
+			mcName := mc.Name
+			if mc.DisplayName != "" {
+				mcName = mc.DisplayName
+			}
+			if !f.checkModelRPM(targetProvider.ID, mcName, mc.RPM) {
 				f.logger.Warn("virtual target model rate limited, trying next", attemptLog, zap.Int("rpm", mc.RPM))
 				continue
 			}
@@ -649,6 +653,9 @@ func (f *Forwarder) ForwardVirtual(c *gin.Context, router *Router, provider *mod
 			)
 		}
 	}
+
+	// Advance index so next request starts from a different target
+	f.advanceVirtualModelIndex(provider.ID, virtualModel, targetCount)
 
 	// All targets exhausted
 	c.JSON(http.StatusTooManyRequests, gin.H{"error": "all virtual model targets returned 429"})
