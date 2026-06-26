@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/user/qwenportal/internal/middleware"
 	"github.com/user/qwenportal/internal/models"
 	"go.uber.org/zap"
 )
@@ -530,6 +531,11 @@ func (f *Forwarder) ForwardVirtual(c *gin.Context, router *Router, provider *mod
 				upstreamModel = m.Name
 				break
 			}
+		}
+
+		// Set log entry model to "[virtualModel].[actualModel]" for traceability
+		if entry, exists := c.Get("log_entry"); exists {
+			entry.(*middleware.LogEntry).Model = virtualModel + "." + targetID
 		}
 
 		// Modify request body to use target's upstream model
