@@ -34,7 +34,7 @@ func NewResponsesHandler(f *proxy.Forwarder, r *proxy.Router, l *zap.Logger, s d
 		router:     r,
 		logger:     l,
 		store:      s,
-		httpClient: &http.Client{Timeout: 5 * time.Minute},
+		httpClient: proxy.NewHTTPClient(5 * time.Minute),
 	}
 }
 

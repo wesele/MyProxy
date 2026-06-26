@@ -20,13 +20,20 @@ type LogEntry struct {
 
 func RequestLogger(logger *zap.Logger, store db.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		path := c.Request.URL.Path
+
+		// Only log actual LLM API calls, skip admin and internal endpoints
+		if strings.HasPrefix(path, "/admin/") || path == "/v1/models" || path == "/" {
+			c.Next()
+			return
+		}
+
 		entry := &LogEntry{
 			RequestID:   uuid.New().String(),
 			StartTime:   time.Now(),
 			RequestType: "chat",
 		}
 
-		path := c.Request.URL.Path
 		switch {
 		case strings.Contains(path, "/embeddings"):
 			entry.RequestType = "embedding"

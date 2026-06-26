@@ -90,7 +90,7 @@ func (h *AdminHandler) TestModels(c *gin.Context) {
 		}
 
 		start := time.Now()
-		client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
+		client := proxy.NewHTTPClient(time.Duration(timeout) * time.Second)
 		baseURL := strings.TrimRight(provider.BaseURL, "/")
 
 		switch provider.ProviderType {
@@ -909,8 +909,7 @@ func (h *AdminHandler) FetchProviderModels(c *gin.Context) {
 		httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(httpReq)
+	resp, err := proxy.NewHTTPClient(15 * time.Second).Do(httpReq)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("request failed: %v", err)})
 		return
@@ -1072,8 +1071,7 @@ func (h *AdminHandler) TestProvider(c *gin.Context) {
 	}
 
 	start := time.Now()
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(httpReq)
+	resp, err := proxy.NewHTTPClient(30 * time.Second).Do(httpReq)
 	latency := time.Since(start).Milliseconds()
 
 	if err != nil {

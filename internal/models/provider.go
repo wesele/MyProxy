@@ -18,6 +18,7 @@ type ModelConfig struct {
 	OutputPrice     float64                `json:"output_price,omitempty"`
 	InputCachePrice float64                `json:"input_cache_price,omitempty"`
 	VirtualTargets  []string               `json:"virtual_targets,omitempty"`
+	RPM             int                    `json:"rpm,omitempty"`
 }
 
 func (m *ModelConfig) IsVirtual() bool {

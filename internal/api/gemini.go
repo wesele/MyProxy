@@ -344,8 +344,7 @@ func (h *GeminiHandler) ChatCompletions(c *gin.Context) {
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 
-		httpClient := &http.Client{Timeout: 5 * time.Minute}
-		resp, err := httpClient.Do(httpReq)
+		resp, err := proxy.NewHTTPClient(5 * time.Minute).Do(httpReq)
 		if err != nil {
 			h.logger.Error("gemini upstream request failed", zap.Error(err))
 			c.JSON(http.StatusBadGateway, gin.H{"error": "upstream request failed: " + err.Error()})

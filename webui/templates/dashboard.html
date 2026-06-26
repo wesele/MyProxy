@@ -413,7 +413,7 @@ function loadModelLogs(model) {
                     <td style="font-size:11px;color:#555;white-space:nowrap;max-width:100px;overflow:hidden;text-overflow:ellipsis;" title="${(l.api_key_name || '').replace(/"/g,'&quot;')}">${l.api_key_name || '-'}</td>
                     <td class="num">${l.provider_key_index != null ? l.provider_key_index : '-'}</td>
                     <td style="font-size:11px;color:#888;white-space:nowrap">${time}</td>
-                    <td><span style="font-size:11px;color:#666">${l.model || l.request_type || 'chat'}</span></td>
+                    <td><span style="font-size:11px;color:#666">${l.model || (l.request_type !== 'chat' ? l.request_type : '-')}</span></td>
                     <td>${statusBadge} ${l.status_code}</td>
                     <td class="num">${l.latency_ms}ms</td>
                     <td class="num">${(l.prompt_tokens || 0).toLocaleString()}</td>

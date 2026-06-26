@@ -99,6 +99,12 @@
                             </div>
                         </div>
 
+                        <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+                        <div class="form-group">
+                            <label>Rate Limit <span style="font-weight:normal;color:#999">(RPM, 0 = unlimited)</span></label>
+                            <input type="number" id="config-rpm" placeholder="e.g. 60" min="0">
+                        </div>
+
                         <div id="config-regular-section">
                             <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
                             <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:#555">Context Parameters</h3>
@@ -540,7 +546,8 @@ function addModel() {
         output_price: 0,
         input_cache_price: 0,
         extra_body: null,
-        virtual_targets: []
+        virtual_targets: [],
+        rpm: 0
     });
     renderModelsLeft();
     syncModelsJSON();
@@ -555,6 +562,7 @@ function showModelConfig(m) {
     document.getElementById('config-display-name').value = m.display_name || '';
     document.getElementById('config-max-tokens').value = m.max_tokens || '';
     document.getElementById('config-max-input-tokens').value = m.max_input_tokens || '';
+    document.getElementById('config-rpm').value = m.rpm || '';
     document.getElementById('config-input-price').value = m.input_price || '';
     document.getElementById('config-output-price').value = m.output_price || '';
     document.getElementById('config-input-cache-price').value = m.input_cache_price || '';
@@ -582,6 +590,7 @@ function saveCurrentModelConfig() {
     const isVirtual = document.getElementById('config-virtual-toggle').checked;
     if (isVirtual) {
         m.virtual_targets = m.virtual_targets || [];
+        m.rpm = parseInt(document.getElementById('config-rpm').value) || 0;
         m.max_tokens = 0;
         m.max_input_tokens = 0;
         m.input_price = 0;
@@ -592,6 +601,7 @@ function saveCurrentModelConfig() {
         m.virtual_targets = [];
         m.max_tokens = parseInt(document.getElementById('config-max-tokens').value) || 0;
         m.max_input_tokens = parseInt(document.getElementById('config-max-input-tokens').value) || 0;
+        m.rpm = parseInt(document.getElementById('config-rpm').value) || 0;
         m.input_price = parseFloat(document.getElementById('config-input-price').value) || 0;
         m.output_price = parseFloat(document.getElementById('config-output-price').value) || 0;
         m.input_cache_price = parseFloat(document.getElementById('config-input-cache-price').value) || 0;
@@ -636,7 +646,7 @@ document.getElementById('provider-form').addEventListener('submit', function(e) 
 });
 
 document.addEventListener('input', function(e) {
-    const f = ['config-display-name','config-max-tokens','config-max-input-tokens','config-input-price','config-output-price','config-input-cache-price','config-extra-body'];
+    const f = ['config-display-name','config-max-tokens','config-max-input-tokens','config-rpm','config-input-price','config-output-price','config-input-cache-price','config-extra-body'];
     if (f.includes(e.target.id)) saveCurrentModelConfig();
 });
 document.addEventListener('change', function(e) {
@@ -653,6 +663,7 @@ function syncModelsJSON() {
         };
         if (m.virtual_targets && m.virtual_targets.length > 0) {
             o.virtual_targets = m.virtual_targets;
+            if (m.rpm) o.rpm = m.rpm;
         } else {
             if (m.max_tokens) o.max_tokens = m.max_tokens;
             if (m.max_input_tokens) o.max_input_tokens = m.max_input_tokens;
@@ -660,6 +671,7 @@ function syncModelsJSON() {
             if (m.input_price) o.input_price = m.input_price;
             if (m.output_price) o.output_price = m.output_price;
             if (m.input_cache_price) o.input_cache_price = m.input_cache_price;
+            if (m.rpm) o.rpm = m.rpm;
         }
         return o;
     });

@@ -21,6 +21,29 @@ type Forwarder struct {
 	logger            *zap.Logger
 	keyIndexMap       sync.Map // provider ID -> current key index
 	virtualModelIndex sync.Map // "providerID:modelName" -> current target index
+	modelRateLimiters sync.Map // "providerID:modelName" -> *rateLimiter
+}
+
+// rateLimiter tracks requests within a sliding 1-minute window.
+type rateLimiter struct {
+	mu          sync.Mutex
+	count       int
+	windowStart time.Time
+}
+
+func (rl *rateLimiter) allow(rpm int) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	if now.Sub(rl.windowStart) >= time.Minute {
+		rl.count = 0
+		rl.windowStart = now
+	}
+	rl.count++
+	if rpm > 0 && rl.count > rpm {
+		return false
+	}
+	return true
 }
 
 // NewHTTPClient creates an http.Client with TLS verification disabled
@@ -237,6 +260,21 @@ func MergeExtraBody(body []byte, extraBody map[string]interface{}) []byte {
 	return merged
 }
 
+// checkModelRPM checks whether the model has exceeded its per-minute rate limit.
+// Returns true if the request is allowed, false if rate limited.
+func (f *Forwarder) checkModelRPM(providerID int64, modelName string, rpm int) bool {
+	if rpm <= 0 {
+		return true
+	}
+	key := modelRateLimitKey(providerID, modelName)
+	rlIface, _ := f.modelRateLimiters.LoadOrStore(key, &rateLimiter{windowStart: time.Now()})
+	return rlIface.(*rateLimiter).allow(rpm)
+}
+
+func modelRateLimitKey(providerID int64, modelName string) string {
+	return fmt.Sprintf("%d:%s", providerID, modelName)
+}
+
 func (f *Forwarder) writeUpstreamResp(c *gin.Context, resp *http.Response, originalBody []byte, isStream bool) {
 	defer resp.Body.Close()
 
@@ -325,6 +363,18 @@ func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path stri
 	// Merge model-specific extra_body if present
 	if mc := FindModelConfig(provider, reqBody.Model); mc != nil && mc.ExtraBody != nil {
 		body = MergeExtraBody(body, mc.ExtraBody)
+	}
+
+	// Check model-level RPM limit
+	if mc := FindModelConfig(provider, reqBody.Model); mc != nil {
+		mcName := mc.Name
+		if mc.DisplayName != "" {
+			mcName = mc.DisplayName
+		}
+		if !f.checkModelRPM(provider.ID, mcName, mc.RPM) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded", "model": mcName})
+			return
+		}
 	}
 
 	keyCount := len(provider.Keys)
@@ -436,6 +486,18 @@ func (f *Forwarder) ForwardVirtual(c *gin.Context, router *Router, provider *mod
 	targetCount := len(targets)
 	startIdx := f.getVirtualModelIndex(provider.ID, virtualModel)
 
+	// Check virtual model's own RPM limit
+	if mc := FindModelConfig(provider, virtualModel); mc != nil && mc.RPM > 0 {
+		mcName := mc.Name
+		if mc.DisplayName != "" {
+			mcName = mc.DisplayName
+		}
+		if !f.checkModelRPM(provider.ID, mcName, mc.RPM) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded", "model": mcName})
+			return
+		}
+	}
+
 	for attempt := 0; attempt < targetCount; attempt++ {
 		idx := (startIdx + attempt) % targetCount
 		targetID := targets[idx]
@@ -483,6 +545,14 @@ func (f *Forwarder) ForwardVirtual(c *gin.Context, router *Router, provider *mod
 		// Merge model-specific extra_body
 		if mc := FindModelConfig(targetProvider, targetModelName); mc != nil && mc.ExtraBody != nil {
 			modifiedBody = MergeExtraBody(modifiedBody, mc.ExtraBody)
+		}
+
+		// Check target model's RPM limit (skip to next target if rate limited)
+		if mc := FindModelConfig(targetProvider, targetModelName); mc != nil && mc.RPM > 0 {
+			if !f.checkModelRPM(targetProvider.ID, mc.Name, mc.RPM) {
+				f.logger.Warn("virtual target model rate limited, trying next", attemptLog, zap.Int("rpm", mc.RPM))
+				continue
+			}
 		}
 
 		// Update context for logging

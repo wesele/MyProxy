@@ -472,7 +472,7 @@ func TestCORS_DELETERequest(t *testing.T) {
 func TestRequestLogger_SetsRequestIDHeader(t *testing.T) {
 	store := &mockStore{}
 	logger := zaptest.NewLogger(t)
-	c, w := createTestContext(t, "")
+	c, w := createTestContextWithPath(t, "/v1/chat/completions")
 	handler := RequestLogger(logger, store)
 	handler(c)
 
@@ -485,7 +485,7 @@ func TestRequestLogger_SetsRequestIDHeader(t *testing.T) {
 func TestRequestLogger_SetsLogEntryInContext(t *testing.T) {
 	store := &mockStore{}
 	logger := zaptest.NewLogger(t)
-	c, w := createTestContext(t, "")
+	c, w := createTestContextWithPath(t, "/v1/chat/completions")
 	handler := RequestLogger(logger, store)
 	handler(c)
 
@@ -512,7 +512,7 @@ func TestRequestLogger_SetsLogEntryInContext(t *testing.T) {
 func TestRequestLogger_SetsRequestIDInContext(t *testing.T) {
 	store := &mockStore{}
 	logger := zaptest.NewLogger(t)
-	c, _ := createTestContext(t, "")
+	c, _ := createTestContextWithPath(t, "/v1/chat/completions")
 	handler := RequestLogger(logger, store)
 	handler(c)
 
@@ -574,14 +574,53 @@ func TestRequestLogger_MessageDetection(t *testing.T) {
 func TestRequestLogger_GenericPathDefaultsToChat(t *testing.T) {
 	store := &mockStore{}
 	logger := zaptest.NewLogger(t)
-	c, _ := createTestContextWithPath(t, "/v1/models")
+	c, _ := createTestContextWithPath(t, "/v1/responses")
 	handler := RequestLogger(logger, store)
 	handler(c)
 
 	entry, _ := c.Get("log_entry")
 	logEntry := entry.(*LogEntry)
-	if logEntry.RequestType != "chat" {
-		t.Errorf("expected 'chat' as default, got '%s'", logEntry.RequestType)
+	if logEntry.RequestType != "responses" {
+		t.Errorf("expected 'responses', got '%s'", logEntry.RequestType)
+	}
+}
+
+func TestRequestLogger_SkipsAdminPath(t *testing.T) {
+	store := &mockStore{}
+	logger := zaptest.NewLogger(t)
+	c, _ := createTestContextWithPath(t, "/admin/api/providers")
+	handler := RequestLogger(logger, store)
+	handler(c)
+
+	_, exists := c.Get("log_entry")
+	if exists {
+		t.Error("expected no log_entry for admin path")
+	}
+}
+
+func TestRequestLogger_SkipsModelsPath(t *testing.T) {
+	store := &mockStore{}
+	logger := zaptest.NewLogger(t)
+	c, _ := createTestContextWithPath(t, "/v1/models")
+	handler := RequestLogger(logger, store)
+	handler(c)
+
+	_, exists := c.Get("log_entry")
+	if exists {
+		t.Error("expected no log_entry for /v1/models path")
+	}
+}
+
+func TestRequestLogger_SkipsRootPath(t *testing.T) {
+	store := &mockStore{}
+	logger := zaptest.NewLogger(t)
+	c, _ := createTestContextWithPath(t, "/")
+	handler := RequestLogger(logger, store)
+	handler(c)
+
+	_, exists := c.Get("log_entry")
+	if exists {
+		t.Error("expected no log_entry for root path")
 	}
 }
 
@@ -594,7 +633,7 @@ func TestRequestLogger_InsertsRequestLog(t *testing.T) {
 		},
 	}
 	logger := zaptest.NewLogger(t)
-	c, _ := createTestContext(t, "")
+	c, _ := createTestContextWithPath(t, "/v1/chat/completions")
 	handler := RequestLogger(logger, store)
 	handler(c)
 
@@ -618,7 +657,7 @@ func TestRequestLogger_InsertsRequestLogWithApiKey(t *testing.T) {
 		},
 	}
 	logger := zaptest.NewLogger(t)
-	c, _ := createTestContext(t, "")
+	c, _ := createTestContextWithPath(t, "/v1/chat/completions")
 	apiKey := &models.ApiKey{ID: 7, Name: "test-key"}
 	c.Set("api_key", apiKey)
 
@@ -644,7 +683,7 @@ func TestRequestLogger_InsertsRequestLogWithProviderID(t *testing.T) {
 		},
 	}
 	logger := zaptest.NewLogger(t)
-	c, _ := createTestContext(t, "")
+	c, _ := createTestContextWithPath(t, "/v1/chat/completions")
 	c.Set("provider_id", int64(99))
 
 	handler := RequestLogger(logger, store)
@@ -673,12 +712,12 @@ func TestRequestLogger_LogsErrorStatus(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(RequestLogger(logger, store))
-	r.GET("/", func(c *gin.Context) {
+	r.GET("/v1/chat/completions", func(c *gin.Context) {
 		c.Status(http.StatusInternalServerError)
 	})
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/chat/completions", nil)
 	r.ServeHTTP(w, req)
 
 	time.Sleep(50 * time.Millisecond)
@@ -703,7 +742,7 @@ func TestRequestLogger_TokenFieldsInContext(t *testing.T) {
 		},
 	}
 	logger := zaptest.NewLogger(t)
-	c, _ := createTestContext(t, "")
+	c, _ := createTestContextWithPath(t, "/v1/chat/completions")
 	c.Set("proxy_prompt_tokens", 150)
 	c.Set("proxy_completion_tokens", 80)
 	c.Set("proxy_input_cache_tokens", 30)
@@ -871,7 +910,7 @@ func TestRequestLogger_NilLoggerPanics(t *testing.T) {
 	store := &mockStore{
 		insertReqLogFn: func(log *models.RequestLog) error { return nil },
 	}
-	c, _ := createTestContext(t, "")
+	c, _ := createTestContextWithPath(t, "/v1/chat/completions")
 	handler := RequestLogger(nil, store)
 
 	defer func() {
