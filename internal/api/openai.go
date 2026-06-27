@@ -137,9 +137,9 @@ func (h *OpenAIHandler) ChatCompletions(c *gin.Context) {
 
 	var finalBody []byte
 	if upstreamModel != reqBody.Model {
-		var bodyMap map[string]interface{}
+		var bodyMap map[string]json.RawMessage
 		if err := json.Unmarshal(body, &bodyMap); err == nil {
-			bodyMap["model"] = upstreamModel
+			bodyMap["model"] = json.RawMessage(`"` + upstreamModel + `"`)
 			finalBody, _ = json.Marshal(bodyMap)
 		}
 	}

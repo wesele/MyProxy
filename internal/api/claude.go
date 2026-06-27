@@ -80,9 +80,9 @@ func (h *ClaudeHandler) Messages(c *gin.Context) {
 
 	var finalBody []byte
 	if upstreamModel != model {
-		var bodyMap map[string]interface{}
+		var bodyMap map[string]json.RawMessage
 		if err := json.Unmarshal(body, &bodyMap); err == nil {
-			bodyMap["model"] = upstreamModel
+			bodyMap["model"] = json.RawMessage(`"` + upstreamModel + `"`)
 			finalBody, _ = json.Marshal(bodyMap)
 		}
 	}

@@ -119,6 +119,12 @@ let selectedModels = new Set();
 let isTesting = false;
 let abortController = null;
 
+// Restore saved test message
+const savedMessage = localStorage.getItem('test_message');
+if (savedMessage) {
+    document.getElementById('test-message').value = savedMessage;
+}
+
 function toggleModel(el) {
     const model = el.dataset.model;
     if (isTesting) return;
@@ -249,6 +255,8 @@ function startTest() {
     });
 
     const message = document.getElementById('test-message').value || 'hi';
+    // Save test message
+    localStorage.setItem('test_message', message);
     const timeout = parseInt(document.getElementById('test-timeout').value) || 30;
 
     // Direct call to Go backend (bypass Flask proxy to avoid SSE buffering)
