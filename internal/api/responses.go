@@ -317,6 +317,8 @@ func (h *ResponsesHandler) handleStandardResponses(c *gin.Context, provider *mod
 	}
 	keyIdx := h.forwarder.GetCurrentKeyIndex(provider.ID)
 
+	retryCount503 := 0
+
 	for attempt := 0; attempt < keyCount; {
 		key := proxy.ProviderKeyAt(provider, keyIdx)
 
@@ -349,7 +351,21 @@ func (h *ResponsesHandler) handleStandardResponses(c *gin.Context, provider *mod
 				zap.Int("to_key_index", (keyIdx+1)%keyCount),
 			)
 			keyIdx = h.forwarder.AdvanceKey(provider.ID, keyCount)
+			retryCount503 = 0
 			attempt++
+			continue
+		}
+
+		if resp.StatusCode == 503 && retryCount503 < proxy.MaxRetries503() {
+			retryCount503++
+			resp.Body.Close()
+			delay := time.Duration(500*(1<<(retryCount503-1))) * time.Millisecond
+			h.logger.Warn("responses service unavailable (503), retrying",
+				zap.Int("retry", retryCount503),
+				zap.Int("max_retries", proxy.MaxRetries503()),
+				zap.Duration("delay", delay),
+			)
+			time.Sleep(delay)
 			continue
 		}
 
@@ -431,6 +447,8 @@ func (h *ResponsesHandler) handleGeminiResponses(c *gin.Context, origBody []byte
 	}
 	keyIdx := h.forwarder.GetCurrentKeyIndex(provider.ID)
 
+	retryCount503 := 0
+
 	for attempt := 0; attempt < keyCount; {
 		key := proxy.ProviderKeyAt(provider, keyIdx)
 
@@ -468,7 +486,21 @@ func (h *ResponsesHandler) handleGeminiResponses(c *gin.Context, origBody []byte
 				zap.Int("to_key_index", (keyIdx+1)%keyCount),
 			)
 			keyIdx = h.forwarder.AdvanceKey(provider.ID, keyCount)
+			retryCount503 = 0
 			attempt++
+			continue
+		}
+
+		if resp.StatusCode == 503 && retryCount503 < proxy.MaxRetries503() {
+			retryCount503++
+			resp.Body.Close()
+			delay := time.Duration(500*(1<<(retryCount503-1))) * time.Millisecond
+			h.logger.Warn("responses gemini service unavailable (503), retrying",
+				zap.Int("retry", retryCount503),
+				zap.Int("max_retries", proxy.MaxRetries503()),
+				zap.Duration("delay", delay),
+			)
+			time.Sleep(delay)
 			continue
 		}
 

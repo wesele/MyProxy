@@ -17,6 +17,13 @@ import (
 	"go.uber.org/zap"
 )
 
+const maxRetries503 = 3
+
+// MaxRetries503 returns the maximum number of retries for 503 Service Unavailable responses.
+func MaxRetries503() int {
+	return maxRetries503
+}
+
 type Forwarder struct {
 	client            *http.Client
 	logger            *zap.Logger
@@ -389,6 +396,8 @@ func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path stri
 
 	targetURL := strings.TrimRight(provider.BaseURL, "/") + path
 
+	retryCount503 := 0
+
 	for attempt := 0; attempt < keyCount; {
 		key := ProviderKeyAt(provider, keyIdx)
 
@@ -429,7 +438,21 @@ func (f *Forwarder) Forward(c *gin.Context, provider *models.Provider, path stri
 				zap.Int("to_key_index", (keyIdx+1)%keyCount),
 			)
 			keyIdx = f.AdvanceKey(provider.ID, keyCount)
+			retryCount503 = 0
 			attempt++
+			continue
+		}
+
+		if resp.StatusCode == 503 && retryCount503 < maxRetries503 {
+			retryCount503++
+			resp.Body.Close()
+			delay := time.Duration(500*(1<<(retryCount503-1))) * time.Millisecond
+			f.logger.Warn("service unavailable (503), retrying",
+				zap.Int("retry", retryCount503),
+				zap.Int("max_retries", maxRetries503),
+				zap.Duration("delay", delay),
+			)
+			time.Sleep(delay)
 			continue
 		}
 
@@ -584,6 +607,7 @@ func (f *Forwarder) ForwardVirtual(c *gin.Context, router *Router, provider *mod
 		keyIdx := f.GetCurrentKeyIndex(targetProvider.ID)
 
 		allKeysExhausted := true
+		retryCount503 := 0
 		for keyAttempt := 0; keyAttempt < keyCount; {
 			key := ProviderKeyAt(targetProvider, keyIdx)
 
@@ -618,6 +642,20 @@ func (f *Forwarder) ForwardVirtual(c *gin.Context, router *Router, provider *mod
 				return
 			}
 
+			if resp.StatusCode == 503 && retryCount503 < maxRetries503 {
+				retryCount503++
+				resp.Body.Close()
+				delay := time.Duration(500*(1<<(retryCount503-1))) * time.Millisecond
+				f.logger.Warn("virtual target: service unavailable (503), retrying",
+					attemptLog,
+					zap.Int("retry", retryCount503),
+					zap.Int("max_retries", maxRetries503),
+					zap.Duration("delay", delay),
+				)
+				time.Sleep(delay)
+				continue
+			}
+
 			if resp.StatusCode == 429 {
 				resp.Body.Close()
 				if keyAttempt+1 < keyCount {
@@ -627,6 +665,7 @@ func (f *Forwarder) ForwardVirtual(c *gin.Context, router *Router, provider *mod
 						zap.Int("to_key_index", (keyIdx+1)%keyCount),
 					)
 					keyIdx = f.AdvanceKey(targetProvider.ID, keyCount)
+					retryCount503 = 0
 					keyAttempt++
 					continue
 				}
