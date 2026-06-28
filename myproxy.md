@@ -1,5 +1,7 @@
 # QwenPortal — LLM API Unified Proxy Gateway
 
+> Agent: 仅在做架构/协议级改动时按需查阅对应章节，勿默认通读全文。
+
 > 版本: v0.1 | 语言: Go 1.26 + Python Flask | 数据库: SQLite | 许可: 内部
 
 ---

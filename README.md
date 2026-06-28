@@ -36,7 +36,7 @@
 - **智能路由** — 根据模型名称精确/前缀/通配符匹配到对应 Provider，增删 Provider 自动刷新
 - **Web 管理界面** — 仪表盘 (请求量图表 + 统计卡片)、Provider 管理、API Key 管理
 - **Provider 工具** — 一键 "Fetch Models" 拉取 Provider 模型列表、"Test Connection" 测试连通性
-- **无需 API Key 即可访问模型代理接口** — 开箱即用，管理接口默认放行 localhost
+- **API Key 认证** — 代理接口需 `Authorization: Bearer <api-key>`；管理接口 localhost/局域网自动放行，远程需 Bearer 或 Session
 - **CORS 支持** — 浏览器端直接调用
 - **原始 API Key 遮蔽** — GET 响应中自动遮蔽 Key，编辑时自动保留未修改的 Key
 - **SHA-256 哈希存储** — API Key 经哈希后存入数据库
@@ -73,10 +73,11 @@ go build -o qwenportal.exe ./cmd/qwenportal/
 
 ### 5. 使用 API
 
-无需 Key，直接调用：
+使用首次运行生成的 API Key（见 `data/admin_key.txt`）：
 
 ```bash
 curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer <your-api-key>" \
   -d '{"model":"qwen3.6-plus","messages":[{"role":"user","content":"hello"}]}'
 ```
 
@@ -84,7 +85,10 @@ Python OpenAI SDK：
 
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://localhost:8080/v1")
+client = OpenAI(
+    base_url="http://localhost:8080/v1",
+    api_key="<your-api-key>",
+)
 resp = client.chat.completions.create(
     model="qwen3.6-plus",
     messages=[{"role": "user", "content": "hello"}]
@@ -94,7 +98,7 @@ print(resp.choices[0].message.content)
 
 ## API 文档
 
-### 代理接口 (无需认证)
+### 代理接口 (需 API Key)
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
